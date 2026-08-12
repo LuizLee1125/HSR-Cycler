@@ -1,157 +1,343 @@
-import React, { useState } from 'react';
-import { BookOpen, Sparkles } from 'lucide-react';
-import { CHARACTERS_DATABASE } from '../data/characters';
+import { useMemo, useState } from 'react';
+import { Search } from 'lucide-react';
+import type { ElementType, HSRCharacter, PathType, RelicRecommendation } from '../types/hsr';
+import { CHARACTERS, ELEMENTS, PATHS } from '../data/characters';
+import { ELEMENT_COLOR, PATH_ABBREVIATION, fullNumber, percent } from '../ui/format';
 
-export const PrydwenDatabase: React.FC = () => {
-  const [selectedCharId, setSelectedCharId] = useState(CHARACTERS_DATABASE[0].id);
-  const character = CHARACTERS_DATABASE.find(c => c.id === selectedCharId) || CHARACTERS_DATABASE[0];
+export function PrydwenDatabase() {
+  const [query, setQuery] = useState('');
+  const [element, setElement] = useState<ElementType | null>(null);
+  const [path, setPath] = useState<PathType | null>(null);
+  const [selectedId, setSelectedId] = useState(CHARACTERS[0]?.id ?? '');
+
+  const filtered = useMemo(
+    () =>
+      CHARACTERS.filter(
+        (character) =>
+          (!element || character.element === element) &&
+          (!path || character.path === path) &&
+          character.name.toLowerCase().includes(query.trim().toLowerCase())
+      ),
+    [query, element, path]
+  );
+
+  const character = CHARACTERS.find((entry) => entry.id === selectedId) ?? filtered[0] ?? CHARACTERS[0];
 
   return (
-    <div className="space-y-6">
-      <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 backdrop-blur-xl flex flex-col md:flex-row items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <BookOpen className="w-5 h-5 text-cyan-400" />
-          <div>
-            <h2 className="text-lg font-bold text-white font-mono">Prydwen.gg Character Database & Relic Builds</h2>
-            <p className="text-xs text-slate-400">Innate stats, trace bonuses, DMG multipliers, relic benchmarks, and optimal team compositions</p>
+    <div className="grid gap-6 xl:grid-cols-[300px_minmax(0,1fr)]">
+      <div className="panel flex h-fit max-h-[calc(100vh-11rem)] flex-col xl:sticky xl:top-32">
+        <div className="rule space-y-3 p-4">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-bone-600" />
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder={`Search ${CHARACTERS.length} characters`}
+              className="w-full rounded-sharp border border-ink-800 bg-ink-850 py-1.5 pl-8 pr-2.5 text-[13px] text-bone-100 outline-none placeholder:text-bone-600 focus:border-ink-600"
+            />
           </div>
+
+          <FilterRow
+            values={ELEMENTS}
+            active={element}
+            onChange={setElement}
+            colorOf={(value) => ELEMENT_COLOR[value]}
+            labelOf={(value) => value.slice(0, 3)}
+          />
+          <FilterRow
+            values={PATHS}
+            active={path}
+            onChange={setPath}
+            labelOf={(value) => PATH_ABBREVIATION[value]}
+          />
         </div>
+
+        <ul className="overflow-y-auto p-1.5">
+          {filtered.map((entry) => {
+            const active = entry.id === character?.id;
+            return (
+              <li key={entry.id}>
+                <button
+                  type="button"
+                  onClick={() => setSelectedId(entry.id)}
+                  className={`flex w-full items-center gap-2.5 rounded-sharp px-2 py-1.5 text-left transition-colors ${
+                    active ? 'bg-ink-800' : 'hover:bg-ink-850'
+                  }`}
+                >
+                  <img src={entry.icon} alt="" loading="lazy" className="h-8 w-8 rounded-sharp bg-ink-850" />
+                  <span className="min-w-0 flex-1">
+                    <span className={`block truncate text-[13px] ${active ? 'text-bone-100' : 'text-bone-300'}`}>
+                      {entry.name}
+                    </span>
+                    <span className="readout block text-[10.5px] text-bone-600">
+                      {entry.rarity}★ · {PATH_ABBREVIATION[entry.path]}
+                    </span>
+                  </span>
+                  <span
+                    className="h-1.5 w-1.5 shrink-0 rounded-full"
+                    style={{ background: ELEMENT_COLOR[entry.element] }}
+                  />
+                </button>
+              </li>
+            );
+          })}
+          {!filtered.length && <li className="px-3 py-6 text-center text-[12.5px] text-bone-600">No matches.</li>}
+        </ul>
       </div>
 
-      {/* Character Tabs Selector */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-2">
-        {CHARACTERS_DATABASE.map(char => (
+      {character && <CharacterDetail character={character} />}
+    </div>
+  );
+}
+
+function FilterRow<T extends string>({
+  values,
+  active,
+  onChange,
+  labelOf,
+  colorOf
+}: {
+  values: T[];
+  active: T | null;
+  onChange: (value: T | null) => void;
+  labelOf: (value: T) => string;
+  colorOf?: (value: T) => string;
+}) {
+  return (
+    <div className="flex flex-wrap gap-1">
+      {values.map((value) => {
+        const on = active === value;
+        return (
           <button
-            key={char.id}
-            onClick={() => setSelectedCharId(char.id)}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border text-xs font-bold transition-all whitespace-nowrap ${
-              selectedCharId === char.id
-                ? 'bg-cyan-500 text-slate-950 border-cyan-400 shadow-md shadow-cyan-500/20'
-                : 'bg-slate-900/80 text-slate-300 border-slate-800 hover:border-slate-700'
+            key={value}
+            type="button"
+            title={value}
+            onClick={() => onChange(on ? null : value)}
+            className={`readout rounded-sharp border px-1.5 py-0.5 text-[10.5px] transition-colors ${
+              on ? 'border-ink-600 bg-ink-800' : 'border-ink-800 hover:border-ink-700'
             }`}
+            style={{ color: on && colorOf ? colorOf(value) : undefined }}
           >
-            <img src={char.icon} alt="" className="w-5 h-5 rounded-full object-cover" />
-            <span>{char.name}</span>
+            {labelOf(value)}
           </button>
-        ))}
+        );
+      })}
+    </div>
+  );
+}
+
+function CharacterDetail({ character }: { character: HSRCharacter }) {
+  const accent = ELEMENT_COLOR[character.element];
+  const { build, meta } = character;
+
+  return (
+    <div className="min-w-0 space-y-5">
+      <div className="panel overflow-hidden">
+        <div className="flex flex-wrap items-center gap-4 px-5 py-4">
+          <img
+            src={character.preview}
+            alt=""
+            className="h-16 w-16 rounded-sharp border border-ink-800 bg-ink-850 object-cover"
+          />
+          <div className="min-w-0 flex-1">
+            <h2 className="text-[20px] font-semibold leading-tight tracking-tight text-bone-100">{character.name}</h2>
+            <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[12.5px] text-bone-500">
+              <span style={{ color: accent }}>{character.element}</span>
+              <span className="text-bone-600">·</span>
+              <span>{character.path}</span>
+              <span className="text-bone-600">·</span>
+              <span>{character.rarity}★</span>
+              {character.maxEnergy !== null && (
+                <>
+                  <span className="text-bone-600">·</span>
+                  <span className="readout">{character.maxEnergy} energy</span>
+                </>
+              )}
+            </p>
+          </div>
+          {character.guideUpdated && (
+            <p className="readout text-[11px] text-bone-600">Guide updated {character.guideUpdated}</p>
+          )}
+        </div>
+
+        <div className="grid grid-cols-2 border-t border-ink-850 sm:grid-cols-4">
+          <MetaCell label="Usage" value={percent(meta.usage)} />
+          <MetaCell label="MoC avg cycles" value={meta.mocAverageCycles?.toFixed(2) ?? '—'} />
+          <MetaCell label="Pure Fiction" value={meta.pureFictionScore ? fullNumber(meta.pureFictionScore) : '—'} />
+          <MetaCell
+            label="Apoc. Shadow"
+            value={meta.apocalypticShadowScore ? fullNumber(meta.apocalypticShadowScore) : '—'}
+          />
+        </div>
       </div>
 
-      {/* Detailed Character Kit & Build Card */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left Card: Kit Overview & Base Stats (5 cols) */}
-        <div className="lg:col-span-5 bg-slate-900/90 border border-slate-800 rounded-2xl p-6 space-y-5 backdrop-blur-xl">
-          <div className="flex items-center gap-4 border-b border-slate-800 pb-4">
-            <img src={character.icon} alt={character.name} className="w-16 h-16 rounded-2xl border-2 border-cyan-400 object-cover shadow-lg" />
-            <div>
-              <h3 className="text-xl font-bold text-white">{character.name}</h3>
-              <div className="flex items-center gap-2 text-xs font-mono text-cyan-400 mt-0.5">
-                <span>{character.element}</span>
-                <span>•</span>
-                <span>{character.path}</span>
-                <span>•</span>
-                <span className="text-amber-400">5★ Rarity</span>
-              </div>
-            </div>
-          </div>
+      <div className="grid gap-5 lg:grid-cols-2">
+        <SetPanel title="Relic sets" sets={build.relicSets} accent={accent} />
+        <SetPanel title="Planar ornaments" sets={build.planarSets} accent={accent} />
+      </div>
 
-          {/* Innate Base Stats */}
-          <div className="space-y-2">
-            <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Innate Base Stats (Lv. 80)</h4>
-            <div className="grid grid-cols-2 gap-2 text-xs font-mono">
-              <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800">
-                <span className="text-slate-500 block text-[10px]">BASE HP</span>
-                <strong className="text-white">{character.baseStats.hp}</strong>
-              </div>
-              <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800">
-                <span className="text-slate-500 block text-[10px]">BASE ATK</span>
-                <strong className="text-white">{character.baseStats.atk}</strong>
-              </div>
-              <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800">
-                <span className="text-slate-500 block text-[10px]">BASE DEF</span>
-                <strong className="text-white">{character.baseStats.def}</strong>
-              </div>
-              <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800">
-                <span className="text-slate-500 block text-[10px]">BASE SPD</span>
-                <strong className="text-cyan-400">{character.baseStats.spd}</strong>
-              </div>
-            </div>
-          </div>
-
-          {/* Skill & Ult Description */}
-          <div className="space-y-3 border-t border-slate-800 pt-3 text-xs">
-            <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-1">
-              <span className="font-bold text-amber-400 block text-[11px]">SKILL: {character.skillDescription}</span>
-            </div>
-            <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-1">
-              <span className="font-bold text-fuchsia-400 block text-[11px]">ULTIMATE: {character.ultDescription}</span>
-            </div>
-          </div>
+      <div className="panel">
+        <div className="rule px-5 py-2.5">
+          <p className="eyebrow">Light cones</p>
         </div>
+        <ul className="divide-y divide-ink-850">
+          {build.lightCones.map((cone, index) => (
+            <li key={`${cone.name}-${index}`} className="flex items-baseline justify-between gap-3 px-5 py-2">
+              <span className="text-[13px] text-bone-300">
+                {cone.name}
+                {cone.superimposition && (
+                  <span className="readout ml-1.5 text-[11px] text-bone-600">S{cone.superimposition}</span>
+                )}
+              </span>
+              <Score relativeDps={cone.relativeDps} priority={cone.priority} accent={accent} />
+            </li>
+          ))}
+          {!build.lightCones.length && <li className="px-5 py-3 text-[12.5px] text-bone-600">No data.</li>}
+        </ul>
+      </div>
 
-        {/* Right Card: Prydwen Relic Recommendations & Teams (7 cols) */}
-        <div className="lg:col-span-7 bg-slate-900/90 border border-slate-800 rounded-2xl p-6 space-y-6 backdrop-blur-xl">
-          <div className="border-b border-slate-800 pb-3">
-            <h3 className="font-bold text-white text-base font-mono flex items-center gap-2">
-              <Sparkles className="w-5 h-5 text-cyan-400" />
-              <span>Prydwen Build Benchmarks & Best Teams</span>
-            </h3>
-          </div>
-
-          {/* Relics & Planar Sets */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
-              <span className="text-xs font-bold text-cyan-400 uppercase">Best Relic Sets</span>
-              <ul className="text-xs text-slate-300 space-y-1 list-disc list-inside">
-                {character.prydwenInfo.bestRelicSets.map((r, i) => (
-                  <li key={i}>{r}</li>
-                ))}
-              </ul>
-            </div>
-
-            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
-              <span className="text-xs font-bold text-fuchsia-400 uppercase">Best Planar Ornaments</span>
-              <ul className="text-xs text-slate-300 space-y-1 list-disc list-inside">
-                {character.prydwenInfo.bestPlanarSets.map((p, i) => (
-                  <li key={i}>{p}</li>
-                ))}
-              </ul>
-            </div>
-          </div>
-
-          {/* Main Stats & Substats Priority */}
-          <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-3">
-            <span className="text-xs font-bold text-amber-400 uppercase">Recommended Main Stats</span>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs font-mono">
-              <div className="bg-slate-900 p-2 rounded border border-slate-800">Body: <strong className="text-white">{character.prydwenInfo.mainStats.body}</strong></div>
-              <div className="bg-slate-900 p-2 rounded border border-slate-800">Feet: <strong className="text-white">{character.prydwenInfo.mainStats.feet}</strong></div>
-              <div className="bg-slate-900 p-2 rounded border border-slate-800">Sphere: <strong className="text-white">{character.prydwenInfo.mainStats.sphere}</strong></div>
-              <div className="bg-slate-900 p-2 rounded border border-slate-800">Rope: <strong className="text-white">{character.prydwenInfo.mainStats.rope}</strong></div>
-            </div>
-          </div>
-
-          {/* Best Teams */}
-          <div className="space-y-3">
-            <span className="text-xs font-bold text-slate-400 uppercase">Optimal Team Compositions</span>
-            {character.prydwenInfo.bestTeams.map((team, idx) => (
-              <div key={idx} className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2 text-xs">
-                <div className="flex items-center justify-between">
-                  <h4 className="font-bold text-white text-sm">{team.name}</h4>
-                  <span className="px-2 py-0.5 text-[10px] font-bold bg-cyan-500/20 text-cyan-400 border border-cyan-500/40 rounded">{team.role}</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-slate-400 font-mono text-[11px]">Teammates:</span>
-                  <div className="flex items-center gap-1">
-                    {team.teammates.map((t, i) => (
-                      <span key={i} className="bg-slate-900 px-2 py-0.5 rounded text-white font-semibold border border-slate-800">{t}</span>
-                    ))}
-                  </div>
-                </div>
-                <p className="text-slate-400 text-[11px] leading-relaxed">{team.description}</p>
-              </div>
-            ))}
-          </div>
+      <div className="panel">
+        <div className="rule px-5 py-2.5">
+          <p className="eyebrow">Stats</p>
         </div>
+        <div className="grid grid-cols-2 gap-x-6 gap-y-3 px-5 py-4 sm:grid-cols-4">
+          <Slot label="Body" value={build.mainStats.body} />
+          <Slot label="Feet" value={build.mainStats.feet} />
+          <Slot label="Planar sphere" value={build.mainStats.sphere} />
+          <Slot label="Link rope" value={build.mainStats.rope} />
+        </div>
+        {build.substats && (
+          <div className="border-t border-ink-850 px-5 py-3">
+            <p className="eyebrow">Substat priority</p>
+            <p className="mt-1 text-[12.5px] leading-relaxed text-bone-300">{build.substats}</p>
+          </div>
+        )}
+        {build.statTargets.length > 0 && (
+          <div className="border-t border-ink-850 px-5 py-3">
+            <p className="eyebrow">Endgame targets</p>
+            <ul className="mt-1.5 space-y-1">
+              {build.statTargets.map((target) => (
+                <li key={target} className="text-[12.5px] leading-relaxed text-bone-300">
+                  {target}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        <div className="border-t border-ink-850 px-5 py-3">
+          <p className="eyebrow">Base stats at level 80</p>
+          <p className="readout mt-1.5 text-[12.5px] text-bone-300">
+            HP {fullNumber(character.baseStats.hp)} · ATK {fullNumber(character.baseStats.atk)} · DEF{' '}
+            {fullNumber(character.baseStats.def)} · SPD {character.baseStats.spd}
+          </p>
+        </div>
+      </div>
+
+      <div className="panel">
+        <div className="rule flex items-baseline justify-between gap-3 px-5 py-2.5">
+          <p className="eyebrow">Best teams</p>
+          <p className="text-[11px] text-bone-600">Memory of Chaos usage data</p>
+        </div>
+        <ul className="divide-y divide-ink-850">
+          {character.teams.map((team, index) => (
+            <li key={index} className="flex flex-wrap items-center justify-between gap-4 px-5 py-3">
+              <div className="flex flex-wrap items-center gap-2">
+                {team.members.map((member) => (
+                  <span
+                    key={member.slug}
+                    className={`rounded-sharp px-2 py-0.5 text-[12.5px] ${
+                      member.slug === character.id ? 'bg-ink-800 text-bone-100' : 'text-bone-400'
+                    }`}
+                    style={member.slug === character.id ? { color: accent } : undefined}
+                  >
+                    {member.name}
+                  </span>
+                ))}
+              </div>
+              <div className="readout flex shrink-0 gap-4 text-[11.5px] text-bone-500">
+                {team.rank !== null && <span>#{team.rank}</span>}
+                {team.appearanceRate !== null && <span>{team.appearanceRate}% use</span>}
+                {team.averageCycles !== null && <span>{team.averageCycles} cyc</span>}
+              </div>
+            </li>
+          ))}
+          {!character.teams.length && (
+            <li className="px-5 py-3 text-[12.5px] text-bone-600">
+              Prydwen records no ranked Memory of Chaos teams for this character.
+            </li>
+          )}
+        </ul>
       </div>
     </div>
   );
-};
+}
+
+function MetaCell({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="border-r border-ink-850 px-5 py-3 last:border-r-0">
+      <p className="eyebrow">{label}</p>
+      <p className="readout mt-1 text-[15px] text-bone-100">{value}</p>
+    </div>
+  );
+}
+
+function Slot({ label, value }: { label: string; value?: string }) {
+  return (
+    <div>
+      <p className="eyebrow">{label}</p>
+      <p className="mt-1 text-[12.5px] text-bone-100">{value ?? '—'}</p>
+    </div>
+  );
+}
+
+function Score({
+  relativeDps,
+  priority,
+  accent
+}: {
+  relativeDps: number | null;
+  priority: number | null;
+  accent: string;
+}) {
+  if (relativeDps !== null) {
+    return (
+      <span className="readout shrink-0 text-[12px]" style={{ color: accent }}>
+        {relativeDps.toFixed(2)}%
+      </span>
+    );
+  }
+  if (priority !== null) {
+    return <span className="readout shrink-0 text-[12px] text-bone-600">#{priority}</span>;
+  }
+  return null;
+}
+
+function SetPanel({
+  title,
+  sets,
+  accent
+}: {
+  title: string;
+  sets: RelicRecommendation[];
+  accent: string;
+}) {
+  return (
+    <div className="panel">
+      <div className="rule px-5 py-2.5">
+        <p className="eyebrow">{title}</p>
+      </div>
+      <ul className="divide-y divide-ink-850">
+        {sets.map((set, index) => (
+          <li key={`${set.name}-${index}`} className="flex items-baseline justify-between gap-3 px-5 py-2">
+            <span className="text-[13px] text-bone-300">
+              {set.name}
+              {set.pieces && <span className="readout ml-1.5 text-[11px] text-bone-600">{set.pieces}pc</span>}
+            </span>
+            <Score relativeDps={set.relativeDps} priority={set.priority} accent={accent} />
+          </li>
+        ))}
+        {!sets.length && <li className="px-5 py-3 text-[12.5px] text-bone-600">No data.</li>}
+      </ul>
+    </div>
+  );
+}

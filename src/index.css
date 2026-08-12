@@ -1,45 +1,150 @@
 @import "tailwindcss";
 
+/*
+ * Design language: a combat readout, not a dashboard.
+ *
+ * Warm near-black ink instead of blue-grey slate, one gold signal colour for
+ * the active state only, and the seven element hues carrying the semantics.
+ * Hairline rules, small radii, tabular numerals, no glows or gradients.
+ */
+@theme {
+  --color-ink-950: #0a0a0b;
+  --color-ink-900: #101012;
+  --color-ink-850: #16161a;
+  --color-ink-800: #1d1d22;
+  --color-ink-700: #2a2a31;
+  --color-ink-600: #3b3b44;
+
+  --color-bone-100: #f4f1ea;
+  --color-bone-300: #cbc6bb;
+  --color-bone-500: #8d887e;
+  --color-bone-600: #6a665e;
+
+  --color-signal: #e0b053;
+  --color-signal-dim: #8a6c31;
+
+  --color-danger: #d1534a;
+  --color-good: #6fae7a;
+
+  --color-el-physical: #cfcabd;
+  --color-el-fire: #f0623f;
+  --color-el-ice: #5fc4e8;
+  --color-el-lightning: #c06fe0;
+  --color-el-wind: #4fbd8e;
+  --color-el-quantum: #6f76d8;
+  --color-el-imaginary: #e5c95f;
+
+  --font-display: "Inter Tight", "Inter", system-ui, sans-serif;
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", ui-monospace, "Cascadia Mono", monospace;
+
+  --radius-sharp: 3px;
+}
+
 @layer base {
   :root {
-    font-family: 'Inter', system-ui, Avenir, Helvetica, Arial, sans-serif;
     color-scheme: dark;
+    font-synthesis: none;
+    -webkit-font-smoothing: antialiased;
   }
 
   body {
     margin: 0;
-    background-color: #030712;
-    color: #f3f4f6;
-    overflow-x: hidden;
+    background: var(--color-ink-950);
+    color: var(--color-bone-100);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  /* Numbers in tables and stat readouts must line up column to column. */
+  table,
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+
+  ::selection {
+    background: var(--color-signal);
+    color: var(--color-ink-950);
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: var(--color-ink-950);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-ink-700);
+    border: 3px solid var(--color-ink-950);
+    border-radius: 99px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-ink-600);
   }
 }
 
-/* Custom HSR Sci-Fi Glowing Scrollbar */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-::-webkit-scrollbar-track {
-  background: #090d16;
-}
-::-webkit-scrollbar-thumb {
-  background: #1e293b;
-  border-radius: 4px;
-  border: 1px solid #06b6d4;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: #0891b2;
-}
-
-@keyframes pulseGlow {
-  0%, 100% {
-    box-shadow: 0 0 15px rgba(6, 182, 212, 0.2);
+@layer components {
+  /* A bordered surface. The whole UI is built from these. */
+  .panel {
+    background: var(--color-ink-900);
+    border: 1px solid var(--color-ink-800);
+    border-radius: var(--radius-sharp);
   }
-  50% {
-    box-shadow: 0 0 30px rgba(6, 182, 212, 0.5);
-  }
-}
 
-.animate-glow {
-  animation: pulseGlow 3s infinite ease-in-out;
+  .panel-inset {
+    background: var(--color-ink-850);
+    border: 1px solid var(--color-ink-800);
+    border-radius: var(--radius-sharp);
+  }
+
+  /* Section label: small, letterspaced, quiet. Never shouty all-caps headings. */
+  .eyebrow {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--color-bone-600);
+  }
+
+  .rule {
+    border-bottom: 1px solid var(--color-ink-800);
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.875rem;
+    border: 1px solid var(--color-ink-700);
+    border-radius: var(--radius-sharp);
+    background: var(--color-ink-850);
+    color: var(--color-bone-100);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: border-color 120ms, background 120ms, color 120ms;
+  }
+  .btn:hover {
+    border-color: var(--color-ink-600);
+    background: var(--color-ink-800);
+  }
+  .btn-primary {
+    background: var(--color-signal);
+    border-color: var(--color-signal);
+    color: var(--color-ink-950);
+    font-weight: 600;
+  }
+  .btn-primary:hover {
+    background: #eec066;
+    border-color: #eec066;
+  }
+
+  /* Numeric readout used across stat blocks. */
+  .readout {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
 }

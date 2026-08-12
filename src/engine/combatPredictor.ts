@@ -1,258 +1,328 @@
 import type {
-  TeamMemberConfig,
+  ActionType,
+  CombatEnemy,
+  EndgameMode,
   EndgameStage,
   SimulationResult,
-  TurnActionInstruction,
-  ActionType,
-  EnemyUnit
+  StageNode,
+  TeamMemberConfig,
+  TurnActionInstruction
 } from '../types/hsr';
-import { calculateBaseAV, calculateDamage } from './hsrMechanics';
+import { allWaves, cycleBudget } from '../data/endgameStages';
+import {
+  CYCLE_AV,
+  FIRST_CYCLE_AV,
+  breakDamage,
+  calculateBaseAV,
+  calculateDamage,
+  cycleAtAV,
+  roleOf,
+  spawn
+} from './hsrMechanics';
+
+const ATTACKER_LEVEL = 80;
+
+interface UnitState {
+  member: TeamMemberConfig;
+  av: number;
+  energy: number;
+  turns: number;
+}
+
+/** Skill/Ultimate multipliers by role, tuned to endgame-level kits. */
+const SKILL_MULTIPLIER = { dps: 2.4, support: 0.8, sustain: 0.6 } as const;
+const ULT_MULTIPLIER = { dps: 3.8, support: 1.6, sustain: 1.4 } as const;
 
 export function runCombatSimulation(
   team: TeamMemberConfig[],
-  stage: EndgameStage
+  stage: EndgameStage,
+  mode: EndgameMode,
+  nodeIndex = 0
 ): SimulationResult {
-  let currentSp = 3;
-  const maxSp = team.some(t => t.character.id === 'sparkle') ? 7 : 5;
-  let currentWaveIndex = 0;
-  let activeEnemies: EnemyUnit[] = JSON.parse(JSON.stringify(stage.waves[0].enemies));
-  
-  let totalAvUsed = 0;
-  const maxAvLimit = stage.mode === 'Pure Fiction' ? 450 : 1050; // 4 cycles for PF, 10 cycles for MoC
-  
+  const node: StageNode | undefined = stage.nodes[nodeIndex];
+  const budget = cycleBudget(stage, mode);
+  const avLimit = FIRST_CYCLE_AV + CYCLE_AV * (budget - 1);
+
+  const waves = node ? allWaves(node) : [];
   const instructions: TurnActionInstruction[] = [];
-  const spHistory: { av: number; sp: number }[] = [{ av: 0, sp: currentSp }];
-  let totalDamageDealt = 0;
-  let totalScore = 0;
-  let turnCounter = 1;
+  const spHistory: { av: number; sp: number }[] = [];
 
-  // Initialize Action Value timeline for team members
-  const memberTimelines = team.map(member => ({
-    member,
-    currentAV: calculateBaseAV(member.stats.spd),
-    energy: Math.floor(member.character.maxEnergy * 0.5), // start at 50% energy
-    ultimateReady: false
-  }));
-
-  // Initial Technique setup
-  instructions.push({
-    turnNumber: 0,
-    avTimestamp: 0,
-    cycleNumber: 0,
-    characterName: team[0]?.character.name || 'Team Leader',
-    characterIcon: team[0]?.character.icon || '',
-    actionType: 'Technique',
-    spChange: 0,
-    currentSpAfter: currentSp,
-    targetName: 'All Enemies',
-    estimatedDamage: 45000,
-    toughnessDamage: 30,
-    recommendationReason: 'Cast Techniques before entering battle (Firefly domain / Ruan Mei auto-break / Acheron instant strike).'
-  });
-
-  while (totalAvUsed < maxAvLimit && activeEnemies.some(e => e.currentHp > 0)) {
-    // Sort timeline to find next unit turn
-    memberTimelines.sort((a, b) => a.currentAV - b.currentAV);
-    const activeMemberState = memberTimelines[0];
-    const avAdvanceStep = activeMemberState.currentAV;
-
-    totalAvUsed += avAdvanceStep;
-    if (totalAvUsed >= maxAvLimit) break;
-
-    // Deduct AV step from all units
-    memberTimelines.forEach(m => {
-      m.currentAV -= avAdvanceStep;
-    });
-
-    const member = activeMemberState.member;
-    const char = member.character;
-    const currentCycle = Math.floor((totalAvUsed - 150 < 0 ? 0 : totalAvUsed - 150) / 100) + (totalAvUsed <= 150 ? 0 : 1);
-
-    // Target primary boss or highest HP enemy
-    const targetEnemy = activeEnemies.find(e => e.isBoss && e.currentHp > 0) || activeEnemies.find(e => e.currentHp > 0)!;
-
-    // Determine optimal action (Basic vs Skill)
-    let chosenAction: ActionType = 'Basic Attack';
-    let spChange = 1;
-    let skillMultiplier = 1.0;
-    let toughnessDmg = 30;
-    let rationale = '';
-
-    // Logic for Support / Buffer vs Main DPS
-    const isMainDps = ['firefly', 'acheron', 'feixiao', 'jingliu', 'castorice'].includes(char.id);
-    const isSuperBreakEngaged = team.some(t => t.character.id === 'harmony_mc' || t.character.id === 'firefly');
-
-    if (isMainDps) {
-      if (currentSp > 0) {
-        chosenAction = 'Skill';
-        spChange = -1;
-        skillMultiplier = char.id === 'firefly' ? 2.6 : char.id === 'acheron' ? 2.4 : 2.2;
-        toughnessDmg = char.id === 'firefly' ? 90 : 60;
-        rationale = `Cast Skill on ${targetEnemy.name} for maximum damage output & toughness depletion.`;
-      } else {
-        chosenAction = 'Basic Attack';
-        spChange = 1;
-        skillMultiplier = 1.0;
-        toughnessDmg = 30;
-        rationale = `SP empty! Use Basic Attack on ${targetEnemy.name} to generate +1 SP for team.`;
-      }
-    } else {
-      // Support / Sustain logic
-      if (char.id === 'ruan_mei' || char.id === 'robin' || char.id === 'sparkle') {
-        if (turnCounter % 3 === 1 && currentSp > 0) {
-          chosenAction = 'Skill';
-          spChange = -1;
-          skillMultiplier = 0.5;
-          rationale = `Cast Skill to deploy ${char.name} support field (Buffs team DMG & Action advance for 3 turns).`;
-        } else {
-          chosenAction = 'Basic Attack';
-          spChange = 1;
-          skillMultiplier = 1.0;
-          rationale = `Use Basic Attack to generate +1 SP while support field remains active.`;
-        }
-      } else {
-        // Sustain healer / shielder
-        if (currentSp < 2) {
-          chosenAction = 'Basic Attack';
-          spChange = 1;
-          rationale = `Use Basic Attack on minion to restore SP (+1 SP).`;
-        } else {
-          chosenAction = 'Skill';
-          spChange = -1;
-          rationale = `Use Skill to grant team shields / heals & emergency toughness damage.`;
-        }
-      }
-    }
-
-    // Adjust SP
-    currentSp = Math.min(maxSp, Math.max(0, currentSp + spChange));
-    spHistory.push({ av: Number(totalAvUsed.toFixed(1)), sp: currentSp });
-
-    // Calculate Damage
-    const dmgResult = calculateDamage({
-      attackerLevel: 80,
-      defenderLevel: 90,
-      attackerStats: member.stats,
-      skillMultiplier,
-      actionType: chosenAction,
-      element: char.element,
-      targetEnemy,
-      defShredPercent: char.id === 'firefly' ? 40 : char.id === 'acheron' ? 30 : 15,
-      resPenPercent: char.id === 'ruan_mei' ? 25 : 10,
-      isSuperBreak: isSuperBreakEngaged && (char.id === 'firefly' || char.id === 'harmony_mc'),
-      toughnessDepletion: toughnessDmg
-    });
-
-    totalDamageDealt += dmgResult.damage;
-    targetEnemy.currentHp = Math.max(0, targetEnemy.currentHp - dmgResult.damage);
-    targetEnemy.currentToughness = Math.max(0, targetEnemy.currentToughness - dmgResult.toughnessDamage);
-
-    if (targetEnemy.currentToughness === 0 && !targetEnemy.isBroken) {
-      targetEnemy.isBroken = true;
-      rationale += ` [WEAKNESS BROKEN!] Enemy action delayed by 30%.`;
-    }
-
-    // Check Ultimate trigger
-    let isUltQueued = false;
-    activeMemberState.energy += 30 * (1 + member.stats.energyRegen / 100);
-    if (activeMemberState.energy >= char.maxEnergy) {
-      activeMemberState.energy = 0;
-      isUltQueued = true;
-      const ultDmg = calculateDamage({
-        attackerLevel: 80,
-        defenderLevel: 90,
-        attackerStats: member.stats,
-        skillMultiplier: 3.5,
-        actionType: 'Ultimate',
-        element: char.element,
-        targetEnemy,
-        isSuperBreak: isSuperBreakEngaged,
-        toughnessDepletion: 90
-      }).damage;
-
-      totalDamageDealt += ultDmg;
-      targetEnemy.currentHp = Math.max(0, targetEnemy.currentHp - ultDmg);
-      rationale += ` -> QUEUE ULTIMATE NOW! Unleash ${char.name}'s Ultimate for ${ultDmg.toLocaleString()} burst DMG!`;
-
-      if (char.id === 'robin') {
-        // Robin 100% team action advance
-        memberTimelines.forEach(m => { m.currentAV = 0; });
-        rationale += ` (Robin Ultimate triggers 100% Team Action Advance!)`;
-      }
-    }
-
-    // Record turn instruction
-    instructions.push({
-      turnNumber: turnCounter++,
-      avTimestamp: Number(totalAvUsed.toFixed(1)),
-      cycleNumber: currentCycle,
-      characterName: char.name,
-      characterIcon: char.icon,
-      actionType: chosenAction,
-      spChange,
-      currentSpAfter: currentSp,
-      targetName: targetEnemy.name,
-      estimatedDamage: dmgResult.damage,
-      toughnessDamage: dmgResult.toughnessDamage,
-      recommendationReason: rationale,
-      isUltQueued
-    });
-
-    // Reset unit AV for next turn
-    activeMemberState.currentAV = calculateBaseAV(member.stats.spd);
-
-    // Wave transition check
-    if (activeEnemies.every(e => e.currentHp <= 0)) {
-      currentWaveIndex++;
-      if (currentWaveIndex < stage.waves.length) {
-        activeEnemies = JSON.parse(JSON.stringify(stage.waves[currentWaveIndex].enemies));
-        instructions.push({
-          turnNumber: turnCounter++,
-          avTimestamp: Number(totalAvUsed.toFixed(1)),
-          cycleNumber: currentCycle,
-          characterName: 'System',
-          characterIcon: '',
-          actionType: 'Technique',
-          spChange: 0,
-          currentSpAfter: currentSp,
-          targetName: `Wave ${currentWaveIndex + 1}`,
-          estimatedDamage: 0,
-          toughnessDamage: 0,
-          recommendationReason: `[WAVE CLEARED] Transitioning to Wave ${currentWaveIndex + 1}: ${stage.waves[currentWaveIndex].name}`
-        });
-      } else {
-        // All waves cleared!
-        break;
-      }
-    }
+  if (!team.length || !waves.length) {
+    return {
+      mode,
+      stageName: stage.name,
+      nodeIndex,
+      cyclesUsed: 0,
+      cycleLimit: budget,
+      estimatedDamage: 0,
+      breakableEnemies: 0,
+      totalEnemies: 0,
+      breaksAchieved: 0,
+      spStarvedTurns: 0,
+      instructions,
+      spHistory,
+      summaryTips: ['Add characters to the team to generate a turn plan.']
+    };
   }
 
-  const allCleared = activeEnemies.every(e => e.currentHp <= 0);
-  const cyclesUsed = Math.ceil((totalAvUsed - 150 < 0 ? 150 : totalAvUsed) / 100);
+  // Weakness coverage is exact: real toughness values, real weakness lists.
+  const teamElements = new Set(team.map((member) => member.character.element));
+  const rosterEnemies = waves.flatMap((wave) => wave.enemies);
+  const breakableEnemies = rosterEnemies.filter((enemy) =>
+    enemy.weaknesses.some((element) => teamElements.has(element))
+  ).length;
 
-  // Score calculation based on mode
-  if (stage.mode === 'Pure Fiction') {
-    totalScore = Math.min(40000, Math.floor((totalDamageDealt / 2500000) * 40000));
-  } else if (stage.mode === 'Apocalyptic Shadow') {
-    totalScore = Math.max(0, 3600 - Math.floor(totalAvUsed));
-  } else {
-    totalScore = allCleared ? (10 - cyclesUsed) * 1000 + 3000 : 1500;
+  // Sparkle-style kits raise the SP ceiling; everything else caps at 5.
+  const maxSp = team.some((member) => member.character.id === 'sparkle') ? 7 : 5;
+  let sp = 3;
+  let totalDamage = 0;
+  let av = 0;
+  let turn = 1;
+  let waveIndex = 0;
+
+  const units: UnitState[] = team.map((member) => ({
+    member,
+    av: calculateBaseAV(member.stats.spd),
+    energy: Math.floor((member.character.maxEnergy ?? 120) * 0.5),
+    turns: 0
+  }));
+
+  let enemies: CombatEnemy[] = spawnWave(waves, 0);
+  let breaksAchieved = 0;
+  let spStarvedTurns = 0;
+
+  spHistory.push({ av: 0, sp });
+
+  while (av < avLimit) {
+    units.sort((a, b) => a.av - b.av);
+    const active = units[0];
+    const step = active.av;
+    if (av + step > avLimit) break;
+
+    av += step;
+    for (const unit of units) unit.av -= step;
+
+    const { member } = active;
+    const { character } = member;
+    const role = roleOf(character.path);
+    active.turns += 1;
+
+    const target = pickTarget(enemies, character.element);
+    if (!target) break;
+
+    let action: ActionType = 'Basic Attack';
+    let spChange = 1;
+    let multiplier = 1;
+    let toughness = 30;
+    let reason = '';
+
+    if (role === 'dps') {
+      if (sp > 0) {
+        action = 'Skill';
+        spChange = -1;
+        multiplier = SKILL_MULTIPLIER.dps;
+        toughness = 60;
+        reason = `Skill into ${target.name} — highest damage per Skill Point on the team.`;
+      } else {
+        spStarvedTurns += 1;
+        reason = `Skill Points are empty. Basic ATK on ${target.name} to bank +1 SP for the next Skill.`;
+      }
+    } else if (role === 'support') {
+      // Buff windows last ~3 turns, so re-cast on a 3-turn rhythm.
+      if (active.turns % 3 === 1 && sp > 0) {
+        action = 'Skill';
+        spChange = -1;
+        multiplier = SKILL_MULTIPLIER.support;
+        reason = `Refresh ${character.name}'s buff window before the DPS turn.`;
+      } else {
+        reason = `${character.name}'s buff is still up — Basic ATK to feed the DPS a Skill Point.`;
+      }
+    } else if (sp >= 2) {
+      action = 'Skill';
+      spChange = -1;
+      multiplier = SKILL_MULTIPLIER.sustain;
+      reason = `Top up shields/healing while the team has Skill Points to spare.`;
+    } else {
+      reason = `Hold ${character.name}'s Skill — Basic ATK keeps the DPS supplied with Skill Points.`;
+    }
+
+    sp = Math.min(maxSp, Math.max(0, sp + spChange));
+    spHistory.push({ av: Number(av.toFixed(1)), sp });
+
+    const hit = calculateDamage({
+      attackerLevel: ATTACKER_LEVEL,
+      stats: member.stats,
+      skillMultiplier: multiplier,
+      actionType: action,
+      element: character.element,
+      target,
+      defShredPercent: character.path === 'Nihility' ? 25 : 0,
+      resPenPercent: character.path === 'Harmony' ? 20 : 0,
+      isSuperBreak: member.stats.breakEffect >= 150 && character.path === 'Destruction',
+      toughnessDepletion: toughness
+    });
+
+    totalDamage += hit.damage;
+    applyDamage(target, hit.damage);
+
+    let brokeWeakness = false;
+    if (hit.toughnessDamage > 0 && !target.isBroken) {
+      target.currentToughness = Math.max(0, target.currentToughness - hit.toughnessDamage);
+      if (target.currentToughness === 0) {
+        target.isBroken = true;
+        brokeWeakness = true;
+        breaksAchieved += 1;
+        const burst = breakDamage(member.stats, character.element, target);
+        totalDamage += burst;
+        applyDamage(target, burst);
+        reason += ` Weakness Broken — ${burst.toLocaleString()} Break DMG and the enemy's action is delayed.`;
+      }
+    }
+
+    // Energy: roughly 30 per turn for an attacking action, scaled by ERR.
+    active.energy += 30 * (member.stats.energyRegen / 100);
+    let isUltQueued = false;
+    const maxEnergy = character.maxEnergy ?? 120;
+    if (active.energy >= maxEnergy) {
+      active.energy = 0;
+      isUltQueued = true;
+      const ult = calculateDamage({
+        attackerLevel: ATTACKER_LEVEL,
+        stats: member.stats,
+        skillMultiplier: ULT_MULTIPLIER[role],
+        actionType: 'Ultimate',
+        element: character.element,
+        target,
+        resPenPercent: character.path === 'Harmony' ? 20 : 0,
+        toughnessDepletion: 60
+      });
+      totalDamage += ult.damage;
+      applyDamage(target, ult.damage);
+      reason += ` Fire ${character.name}'s Ultimate now (${ult.damage.toLocaleString()} DMG).`;
+    }
+
+    instructions.push({
+      turnNumber: turn++,
+      avTimestamp: Number(av.toFixed(1)),
+      cycleNumber: cycleAtAV(av),
+      characterName: character.name,
+      characterIcon: character.icon,
+      actionType: action,
+      spChange,
+      currentSpAfter: sp,
+      targetName: target.name,
+      estimatedDamage: hit.damage,
+      toughnessDamage: hit.toughnessDamage,
+      recommendationReason: reason,
+      isUltQueued,
+      brokeWeakness
+    });
+
+    active.av = calculateBaseAV(member.stats.spd);
+
+    if (enemies.every((enemy) => enemy.currentHp <= 0)) {
+      waveIndex += 1;
+      if (waveIndex >= waves.length) break;
+      enemies = spawnWave(waves, waveIndex);
+      instructions.push({
+        turnNumber: turn++,
+        avTimestamp: Number(av.toFixed(1)),
+        cycleNumber: cycleAtAV(av),
+        characterName: 'Wave clear',
+        characterIcon: '',
+        actionType: 'Technique',
+        spChange: 0,
+        currentSpAfter: sp,
+        targetName: `Wave ${waveIndex + 1}`,
+        estimatedDamage: 0,
+        toughnessDamage: 0,
+        recommendationReason: `Wave ${waveIndex} down. Wave ${waveIndex + 1} spawns — re-check weaknesses before committing Ultimates.`
+      });
+    }
   }
 
   return {
-    cleared: allCleared,
-    mode: stage.mode,
-    cyclesUsed: Math.min(10, cyclesUsed),
-    scoreAchieved: totalScore,
-    totalDamageDealt,
-    winProbability: allCleared ? 94.5 : Math.min(85, Math.floor((totalDamageDealt / 5000000) * 100)),
+    mode,
+    stageName: stage.name,
+    nodeIndex,
+    cyclesUsed: Math.min(budget, cycleAtAV(av)),
+    cycleLimit: budget,
+    estimatedDamage: totalDamage,
+    breakableEnemies,
+    totalEnemies: rosterEnemies.length,
+    breaksAchieved,
+    spStarvedTurns,
     instructions,
     spHistory,
-    summaryTips: [
-      `Maintain continuous SP balance above 2 for your main DPS turns.`,
-      `Save Robin / Sparkle Ultimate until right before your main DPS turn for maximum AV efficiency.`,
-      `Break enemy toughness before Boss unleashes powerful charge attack at AV timestamp.`,
-      `Equip 160.1 Hyperspeed on support units (Ruan Mei / Sparkle / Tingyun) to gain an extra turn in Cycle 1.`
-    ]
+    summaryTips: buildTips(team, node, stage, breakableEnemies, rosterEnemies.length, spStarvedTurns)
   };
+}
+
+function spawnWave(waves: ReturnType<typeof allWaves>, index: number): CombatEnemy[] {
+  const wave = waves[index];
+  if (!wave) return [];
+  return wave.enemies.flatMap((enemy) =>
+    Array.from({ length: Math.max(1, enemy.count) }, (_, i) => spawn(enemy, i))
+  );
+}
+
+function applyDamage(target: CombatEnemy, amount: number) {
+  target.currentHp = Math.max(0, target.currentHp - amount);
+}
+
+/** Prefer a live enemy this element can break, then bosses, then anything alive. */
+function pickTarget(enemies: CombatEnemy[], element: string): CombatEnemy | null {
+  const alive = enemies.filter((enemy) => enemy.currentHp > 0);
+  if (!alive.length) return null;
+  return (
+    alive.find((enemy) => enemy.weaknesses.includes(element as never) && !enemy.isBroken) ??
+    alive.find((enemy) => enemy.isBoss) ??
+    alive[0]
+  );
+}
+
+function buildTips(
+  team: TeamMemberConfig[],
+  node: StageNode | undefined,
+  stage: EndgameStage,
+  breakable: number,
+  totalEnemies: number,
+  spStarvedTurns: number
+): string[] {
+  const tips: string[] = [];
+  const covered = new Set(team.map((member) => member.character.element));
+  const needed = new Set(node?.recommendedElements ?? []);
+  const missing = [...needed].filter((element) => !covered.has(element));
+
+  if (breakable < totalEnemies) {
+    tips.push(
+      `${totalEnemies - breakable} of ${totalEnemies} enemies here have no weakness this team can hit — they can only be broken by a weakness implant.`
+    );
+  } else if (totalEnemies) {
+    tips.push(`Every enemy in this node has a weakness the team covers.`);
+  }
+
+  if (missing.length) {
+    tips.push(`The node's recommended elements include ${missing.join(' and ')}, which nobody on the team brings.`);
+  }
+
+  const slowest = [...team].sort((a, b) => a.stats.spd - b.stats.spd)[0];
+  if (slowest && slowest.stats.spd < 134) {
+    tips.push(
+      `${slowest.character.name} is at ${slowest.stats.spd} SPD. 134 is the usual breakpoint for an extra turn in the first cycle.`
+    );
+  }
+
+  if (spStarvedTurns > 2) {
+    tips.push(
+      `${spStarvedTurns} turns were spent on Basic ATK purely to refill Skill Points — this line-up is Skill Point negative.`
+    );
+  }
+
+  if (stage.turbulence) tips.push(`Turbulence — ${stage.turbulence.description}`);
+  for (const modifier of stage.modifiers.slice(0, 2)) {
+    tips.push(`${modifier.name} — ${modifier.description}`);
+  }
+
+  return tips;
 }

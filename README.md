@@ -1,32 +1,50 @@
-# React + TypeScript + Vite
+# HSR Cycler
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+An endgame planner for Honkai: Star Rail. It carries the full released roster with current
+Prydwen builds and teams, every stage of the live Memory of Chaos / Pure Fiction / Apocalyptic
+Shadow / Anomaly Arbitration rotation with real enemy stats, and a rotation planner that works out
+turn order, Skill Point economy and weakness-break timing against a chosen node.
 
-Currently, two official plugins are available:
+Built with React 19, Tailwind 4, Vite and Tauri 2.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Running it
 
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+npm install
+npm run dev
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+`npm run build` type-checks and bundles. `npm run lint` runs oxlint.
+
+## Data
+
+Nothing in `src/data/generated/` is written by hand. Refresh it with:
+
+```bash
+npm run data
+```
+
+That runs two generators:
+
+| Generator | Output | Source |
+| --- | --- | --- |
+| `scripts/fetch-endgame.mjs` | `src/data/generated/endgame.json` | nanoka.cc's data CDN |
+| `scripts/fetch-characters.mjs` | `src/data/generated/characters.json` | prydwen.gg + StarRailRes |
+
+Both cache HTTP responses in `.cache/` for 12 hours, so re-running is cheap and does not hammer
+either site. The generators track the live game version by themselves — the nanoka data build is
+read back out of the site's own markup, and unreleased characters and beta seasons are filtered
+out — so a new patch only needs `npm run data`.
+
+See `system_architecture.md` for the data contract and the enemy stat formula.
+
+## What the planner does and does not model
+
+Turn order, Action Values, Skill Point balance, weakness coverage and break timing are computed
+from the real stage data and are accurate.
+
+Damage is a **kit-agnostic estimate**. The generators can read builds and teams, but no public
+source exposes per-character skill multipliers, buff values, follow-up attacks or memosprite
+behaviour in a machine-readable form. The predictor therefore uses generic per-role multipliers,
+which read low against real clears. Use it to compare builds against each other, not to predict a
+clear.

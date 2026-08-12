@@ -1,127 +1,228 @@
 export type ElementType = 'Physical' | 'Fire' | 'Ice' | 'Lightning' | 'Wind' | 'Quantum' | 'Imaginary';
 
-export type PathType = 'Destruction' | 'The Hunt' | 'Erudition' | 'Harmony' | 'Nihility' | 'Preservation' | 'Abundance';
+export type PathType =
+  | 'Destruction'
+  | 'The Hunt'
+  | 'Erudition'
+  | 'Harmony'
+  | 'Nihility'
+  | 'Preservation'
+  | 'Abundance'
+  | 'Remembrance'
+  | 'Elation';
 
 export type EndgameMode = 'Memory of Chaos' | 'Pure Fiction' | 'Apocalyptic Shadow' | 'Anomaly Arbitration';
 
 export type ActionType = 'Basic Attack' | 'Skill' | 'Ultimate' | 'Assist Skill' | 'Technique' | 'Follow-Up Attack';
+
+/** nanoka rank ids, ascending in threat. */
+export type EnemyRank = 'Minion' | 'MinionLv2' | 'Elite' | 'LittleBoss' | 'Boss';
 
 export interface CharacterStats {
   hp: number;
   atk: number;
   def: number;
   spd: number;
-  critRate: number; // percentage e.g. 70
-  critDmg: number; // percentage e.g. 160
-  breakEffect: number; // percentage e.g. 180
-  energyRegen: number; // percentage e.g. 119.4
-  effectHitRate: number; // percentage e.g. 40
-  dmgBonus: number; // percentage e.g. 48.8
+  critRate: number;
+  critDmg: number;
+  breakEffect: number;
+  energyRegen: number;
+  effectHitRate: number;
+  dmgBonus: number;
 }
 
-export interface CharacterTraceBonus {
-  stat: keyof CharacterStats;
-  value: number;
-}
+/* ------------------------------------------------------------------ *
+ * Characters — generated from prydwen.gg + StarRailRes
+ * ------------------------------------------------------------------ */
 
-export interface RelicSetBonus {
+/**
+ * Prydwen publishes either a relative-DPS percentage (where it has damage
+ * calculations) or a plain priority rank. Exactly one of the two is set.
+ */
+export interface Recommendation {
   name: string;
-  pieces: 2 | 4;
-  description: string;
-  statBoosts: Partial<CharacterStats>;
+  relativeDps: number | null;
+  priority: number | null;
 }
 
-export interface PrydwenBuildInfo {
-  bestRelicSets: string[];
-  bestPlanarSets: string[];
-  mainStats: {
-    body: string;
-    feet: string;
-    sphere: string;
-    rope: string;
-  };
-  substatPriority: string[];
-  bestLightCones: string[];
-  bestTeams: {
-    name: string;
-    role: string;
-    teammates: string[];
-    description: string;
-  }[];
+export interface RelicRecommendation extends Recommendation {
+  pieces: 2 | 4 | null;
+}
+
+export interface LightConeRecommendation extends Recommendation {
+  superimposition: number | null;
+}
+
+export interface MainStatPriority {
+  body?: string;
+  feet?: string;
+  sphere?: string;
+  rope?: string;
+}
+
+export interface CharacterBuild {
+  relicSets: RelicRecommendation[];
+  planarSets: RelicRecommendation[];
+  lightCones: LightConeRecommendation[];
+  mainStats: MainStatPriority;
+  substats: string | null;
+  substatNote: string | null;
+  statTargets: string[];
+  /** `statTargets` parsed into numbers, e.g. `ATK: 2900-3200+` -> `{ atk: 2900 }`. */
+  statBaseline: Partial<CharacterStats>;
+}
+
+export interface TeamMember {
+  slug: string;
+  name: string;
+}
+
+/** A Memory of Chaos team with Prydwen's player-run telemetry. */
+export interface TeamRecommendation {
+  rank: number | null;
+  appearanceRate: number | null;
+  averageCycles: number | null;
+  averageCyclesE1: number | null;
+  members: TeamMember[];
+}
+
+export interface CharacterMeta {
+  usage: number | null;
+  mocAverageCycles: number | null;
+  pureFictionScore: number | null;
+  apocalypticShadowScore: number | null;
 }
 
 export interface HSRCharacter {
+  /** Prydwen slug, e.g. `dan-heng-permansor-terrae`. */
   id: string;
+  /** In-game avatar id, e.g. `1414`. */
+  gameId: string;
   name: string;
   element: ElementType;
   path: PathType;
   rarity: 4 | 5;
+  maxEnergy: number | null;
   icon: string;
+  preview: string;
   splash: string;
   baseStats: CharacterStats;
-  traceBonuses: CharacterTraceBonus[];
-  maxEnergy: number;
-  skillSpCost: number; // usually +1 for basic, -1 for skill
-  prydwenInfo: PrydwenBuildInfo;
-  defaultLightCone: string;
-  defaultRelics: string[];
-  skillDescription: string;
-  ultDescription: string;
-  talentDescription: string;
+  build: CharacterBuild;
+  teams: TeamRecommendation[];
+  meta: CharacterMeta;
+  guideUpdated: string | null;
 }
 
+export interface CharacterDatabase {
+  sources: string[];
+  generatedAt: string;
+  characters: HSRCharacter[];
+}
+
+/* ------------------------------------------------------------------ *
+ * Endgame — generated from nanoka.cc
+ * ------------------------------------------------------------------ */
+
+export interface EnemyUnit {
+  monsterId: number;
+  templateId: number;
+  name: string;
+  rank: EnemyRank;
+  isBoss: boolean;
+  level: number;
+  hp: number;
+  atk: number;
+  def: number;
+  spd: number;
+  /** Toughness on the in-game scale, where a single-target Basic ATK removes 30. */
+  toughness: number;
+  /** Multi-phase bosses refill HP between phases. */
+  phases: number;
+  phasesEstimated: boolean;
+  weaknesses: ElementType[];
+  /** Effect RES as a percentage, e.g. `30` for 30%. */
+  effectRes: number;
+  icon: string;
+  /** How many copies of this enemy the wave spawns. */
+  count: number;
+}
+
+export interface EnemyWave {
+  waveIndex: number;
+  enemies: EnemyUnit[];
+  /** Endless waves only: how many enemies stand on the field at once. */
+  maxOnField?: number | null;
+  /** Endless waves only: the wave's own HP scalar. */
+  hpMultiplier?: number;
+}
+
+/** One half of a stage — Prydwen and the game both call these "nodes". */
+export interface StageNode {
+  index: number;
+  level: number | null;
+  recommendedElements: ElementType[];
+  waves: EnemyWave[];
+  endlessWaves: EnemyWave[];
+}
+
+export interface StageModifier {
+  name: string;
+  description: string;
+}
+
+export interface EndgameStage {
+  id: string;
+  stageId: number;
+  stageNumber: number;
+  name: string;
+  /** Memory of Chaos turbulence; other modes use `modifiers`. */
+  turbulence: StageModifier | null;
+  modifiers: StageModifier[];
+  /** Cycle budget where the mode defines one. */
+  cycleLimit: number | null;
+  starConditions: string[];
+  nodes: StageNode[];
+}
+
+export interface EndgameSeason {
+  mode: EndgameMode;
+  seasonId: number;
+  seasonName: string;
+  stages: EndgameStage[];
+}
+
+export interface EndgameDatabase {
+  source: string;
+  /** nanoka data build, e.g. `4.4.54`. */
+  dataVersion: string;
+  /** Live game version, e.g. `4.4`. */
+  gameVersion: string;
+  generatedAt: string;
+  modes: EndgameSeason[];
+}
+
+/* ------------------------------------------------------------------ *
+ * Simulation
+ * ------------------------------------------------------------------ */
+
 export interface TeamMemberConfig {
-  slot: number; // 0, 1, 2, 3
+  slot: number;
   character: HSRCharacter;
   stats: CharacterStats;
-  eidolon: number; // 0..6
-  superimposition: number; // 1..5
+  eidolon: number;
+  superimposition: number;
   lightCone: string;
   relicSets: string[];
   planarSet: string;
 }
 
-export interface EnemyUnit {
-  id: string;
-  name: string;
-  icon: string;
-  isBoss: boolean;
-  hp: number;
+/** Mutable per-run copy of an `EnemyUnit`. */
+export interface CombatEnemy extends EnemyUnit {
+  instanceId: string;
   currentHp: number;
-  speed: number;
-  toughness: number; // max toughness
+  maxHp: number;
   currentToughness: number;
-  weaknesses: ElementType[];
-  resistances: Record<ElementType, number>; // e.g. 0.20 = 20% RES
-  def: number;
   isBroken: boolean;
-  brokenDelayAV: number;
-}
-
-export interface EnemyWave {
-  waveIndex: number;
-  name: string;
-  enemies: EnemyUnit[];
-}
-
-export interface StageTurbulence {
-  name: string;
-  description: string;
-  effectType: 'cycle_end_blast' | 'break_dmg_boost' | 'ult_stack_nuke' | 'assist_skill_burst';
-  stackLimit?: number;
-  bonusMultiplier?: number;
-}
-
-export interface EndgameStage {
-  id: string;
-  mode: EndgameMode;
-  stageName: string;
-  stageNumber: number;
-  maxCycles: number; // e.g. 10 for MoC 3-star, 4 for PF
-  targetScore?: number; // e.g. 40000 for PF, 3600 for AS
-  turbulence: StageTurbulence;
-  waves: EnemyWave[];
-  recommendedElements: ElementType[];
 }
 
 export interface TurnActionInstruction {
@@ -138,16 +239,31 @@ export interface TurnActionInstruction {
   toughnessDamage: number;
   recommendationReason: string;
   isUltQueued?: boolean;
-  isAssistSkillAvailable?: boolean;
+  brokeWeakness?: boolean;
 }
 
+/**
+ * The output is a *rotation* plan. Action Value order, Skill Point economy and
+ * weakness-break timing are computed from real stage data and are accurate.
+ * Damage is a kit-agnostic estimate: it has no access to per-character
+ * multipliers, buffs, follow-up attacks or memosprites, so it reads low and is
+ * only useful for comparing builds against each other.
+ */
 export interface SimulationResult {
-  cleared: boolean;
   mode: EndgameMode;
+  stageName: string;
+  nodeIndex: number;
   cyclesUsed: number;
-  scoreAchieved: number;
-  totalDamageDealt: number;
-  winProbability: number;
+  cycleLimit: number;
+  /** Kit-agnostic lower bound — see the note above. */
+  estimatedDamage: number;
+  /** How many enemies in the node this team can break at all. */
+  breakableEnemies: number;
+  totalEnemies: number;
+  /** Enemies actually broken during the simulated rotation. */
+  breaksAchieved: number;
+  /** Fraction of turns spent on Basic ATK purely to refill Skill Points. */
+  spStarvedTurns: number;
   instructions: TurnActionInstruction[];
   spHistory: { av: number; sp: number }[];
   summaryTips: string[];

@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# HTTP cache for the data generators (scripts/)
+.cache
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

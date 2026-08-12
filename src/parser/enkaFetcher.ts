@@ -1,149 +1,154 @@
 import type { CharacterStats } from '../types/hsr';
+import { CHARACTERS } from '../data/characters';
+
+export interface EnkaAvatar {
+  characterId: string;
+  characterName: string;
+  icon: string;
+  level: number;
+  eidolon: number;
+  lightCone: string | null;
+  lightConeSuperimposition: number | null;
+  relicSetIds: number[];
+  /** Only present when the payload actually carries computed stats. */
+  stats: CharacterStats | null;
+}
 
 export interface EnkaFetchResult {
   success: boolean;
   uid: string;
   playerNickname?: string;
   level?: number;
-  avatarList: {
-    characterId: string;
-    characterName: string;
-    level: number;
-    stats: CharacterStats;
-    relics: string[];
-    lightCone: string;
-  }[];
+  avatarList: EnkaAvatar[];
   errorMessage?: string;
 }
 
+const BY_GAME_ID = new Map(CHARACTERS.map((character) => [character.gameId, character]));
+
+type Json = Record<string, unknown>;
+
+const asRecord = (value: unknown): Json => (value && typeof value === 'object' ? (value as Json) : {});
+const asArray = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
+const asNumber = (value: unknown): number | null => (typeof value === 'number' && Number.isFinite(value) ? value : null);
+
 /**
- * Fetches character showcase details from Enka.network API.
- * API Endpoint: https://enka.network/api/hsr/uid/{uid}
+ * Reads a player's character showcase from Enka.network.
+ *
+ * Enka returns build *configuration* (level, Eidolon, Light Cone, relics) but
+ * not computed combat stats. Rather than invent numbers, `stats` is left null
+ * when the payload has none and the UI keeps the character's base stats.
  */
 export async function fetchEnkaBuildsByUid(uid: string): Promise<EnkaFetchResult> {
-  const sanitizedUid = uid.trim().replace(/\D/g, '');
-  if (!sanitizedUid || sanitizedUid.length < 8) {
+  const sanitized = uid.trim().replace(/\D/g, '');
+  if (sanitized.length < 9) {
+    return { success: false, uid, avatarList: [], errorMessage: 'Enter a 9-digit Honkai: Star Rail UID.' };
+  }
+
+  let payload: Json;
+  try {
+    const response = await fetch(`https://enka.network/api/hsr/uid/${sanitized}?lang=en`, {
+      headers: { accept: 'application/json' }
+    });
+    if (response.status === 404) {
+      return { success: false, uid: sanitized, avatarList: [], errorMessage: 'No player with that UID.' };
+    }
+    if (response.status === 424) {
+      return {
+        success: false,
+        uid: sanitized,
+        avatarList: [],
+        errorMessage: 'Enka cannot reach the game server right now. Try again shortly.'
+      };
+    }
+    if (!response.ok) {
+      return {
+        success: false,
+        uid: sanitized,
+        avatarList: [],
+        errorMessage: `Enka.network returned HTTP ${response.status}.`
+      };
+    }
+    payload = asRecord(await response.json());
+  } catch {
     return {
       success: false,
-      uid,
+      uid: sanitized,
       avatarList: [],
-      errorMessage: 'Please enter a valid 9-digit Honkai: Star Rail UID.'
+      errorMessage:
+        'Could not reach enka.network. In a browser this is usually CORS — run the desktop build, which is not subject to it.'
     };
   }
 
-  try {
-    const response = await fetch(`https://enka.network/api/hsr/uid/${sanitizedUid}`, {
-      headers: {
-        'Accept': 'application/json',
-        'User-Agent': 'HSR-Cycler-Predictor/1.0'
-      }
-    });
+  const detail = asRecord(payload.detailInfo ?? payload.playerInfo);
+  const avatarList = asArray(detail.avatarDetailList)
+    .map((entry) => toAvatar(asRecord(entry)))
+    .filter((avatar): avatar is EnkaAvatar => avatar !== null);
 
-    if (!response.ok) {
-      if (response.status === 404) {
-        throw new Error('UID not found or character showcase details hidden in-game.');
-      }
-      throw new Error(`Enka API returned status ${response.status}`);
-    }
-
-    const data = await response.json();
-    const detailInfo = data.detailInfo || data.playerInfo || {};
-
-    const avatarList = (detailInfo.avatarDetailList || []).map((avatar: any) => {
-      const charId = String(avatar.avatarId || avatar.id || 'firefly');
-      return {
-        characterId: charId,
-        characterName: mapEnkaAvatarIdToName(charId),
-        level: avatar.level || 80,
-        stats: {
-          hp: Math.round(avatar.finalStats?.hp || 3450),
-          atk: Math.round(avatar.finalStats?.atk || 2680),
-          def: Math.round(avatar.finalStats?.def || 1120),
-          spd: Math.round(avatar.finalStats?.spd || 154),
-          critRate: Number((avatar.finalStats?.critRate * 100 || 15).toFixed(1)),
-          critDmg: Number((avatar.finalStats?.critDmg * 100 || 72).toFixed(1)),
-          breakEffect: Number((avatar.finalStats?.breakEffect * 100 || 284.5).toFixed(1)),
-          energyRegen: Number((avatar.finalStats?.energyRegen * 100 || 100).toFixed(1)),
-          effectHitRate: Number((avatar.finalStats?.effectHitRate * 100 || 10).toFixed(1)),
-          dmgBonus: Number((avatar.finalStats?.dmgBonus * 100 || 0).toFixed(1))
-        },
-        relics: ['Iron Cavalry against the Scourge', 'Forge of the Kalpagni Lantern'],
-        lightCone: 'Where Dreams Remain'
-      };
-    });
-
-    if (avatarList.length === 0) {
-      // Fallback mock builds if showcase details setting is toggled off
-      return getMockEnkaResult(sanitizedUid, detailInfo.nickname || 'Trailblazer');
-    }
-
+  if (!avatarList.length) {
     return {
-      success: true,
-      uid: sanitizedUid,
-      playerNickname: detailInfo.nickname || 'Trailblazer',
-      level: detailInfo.level || 70,
-      avatarList
+      success: false,
+      uid: sanitized,
+      avatarList: [],
+      playerNickname: typeof detail.nickname === 'string' ? detail.nickname : undefined,
+      errorMessage: 'This profile has no characters on display. Enable the in-game showcase and try again.'
     };
-
-  } catch (err: any) {
-    console.warn('[Enka API Fetch Warning]: Using fallback build showcase generator.', err);
-    return getMockEnkaResult(sanitizedUid, 'Trailblazer');
   }
-}
 
-function mapEnkaAvatarIdToName(id: string): string {
-  const map: Record<string, string> = {
-    '1310': 'Firefly',
-    '1308': 'Acheron',
-    '1312': 'Feixiao',
-    '1303': 'Ruan Mei',
-    '1309': 'Robin',
-    '1306': 'Sparkle',
-    '1304': 'Aventurine',
-    '8005': 'Harmony MC'
-  };
-  return map[id] || 'Firefly';
-}
-
-function getMockEnkaResult(uid: string, nickname: string): EnkaFetchResult {
   return {
     success: true,
-    uid,
-    playerNickname: nickname,
-    level: 70,
-    avatarList: [
-      {
-        characterId: 'firefly',
-        characterName: 'Firefly',
-        level: 80,
-        stats: { hp: 3520, atk: 2710, def: 1140, spd: 155.4, critRate: 12.4, critDmg: 68.0, breakEffect: 342.0, energyRegen: 100, effectHitRate: 8, dmgBonus: 0 },
-        relics: ['Iron Cavalry against the Scourge (4pc)', 'Forge of the Kalpagni Lantern (2pc)'],
-        lightCone: 'Where Dreams Remain (S1)'
-      },
-      {
-        characterId: 'acheron',
-        characterName: 'Acheron',
-        level: 80,
-        stats: { hp: 3180, atk: 3940, def: 1020, spd: 101, critRate: 78.5, critDmg: 224.0, breakEffect: 0, energyRegen: 100, effectHitRate: 0, dmgBonus: 48.8 },
-        relics: ['Pioneer Diver of Dead Waters (4pc)', 'Izumo Gensei (2pc)'],
-        lightCone: 'Along the Passing Shore (S1)'
-      },
-      {
-        characterId: 'ruan_mei',
-        characterName: 'Ruan Mei',
-        level: 80,
-        stats: { hp: 4100, atk: 1850, def: 1420, spd: 146.2, critRate: 5.0, critDmg: 50.0, breakEffect: 182.4, energyRegen: 119.4, effectHitRate: 10, dmgBonus: 0 },
-        relics: ['Messenger Traversing Hackerspace (4pc)', 'Broken Keel (2pc)'],
-        lightCone: 'Past Self in Mirror (S1)'
-      },
-      {
-        characterId: 'robin',
-        characterName: 'Robin',
-        level: 80,
-        stats: { hp: 3950, atk: 4120, def: 1380, spd: 121, critRate: 5.0, critDmg: 50.0, breakEffect: 0, energyRegen: 124.4, effectHitRate: 0, dmgBonus: 0 },
-        relics: ['Musketeer (2pc) + Prisoner (2pc)', 'Lushaka (2pc)'],
-        lightCone: 'Flowing Nightglow (S1)'
-      }
-    ]
+    uid: sanitized,
+    playerNickname: typeof detail.nickname === 'string' ? detail.nickname : undefined,
+    level: asNumber(detail.level) ?? undefined,
+    avatarList
+  };
+}
+
+function toAvatar(raw: Json): EnkaAvatar | null {
+  const gameId = String(raw.avatarId ?? raw.id ?? '');
+  const character = BY_GAME_ID.get(gameId);
+  if (!character) return null;
+
+  const equipment = asRecord(raw.equipment);
+  const relicSetIds = asArray(raw.relicList)
+    .map((relic) => asNumber(asRecord(relic).tid))
+    // Relic ids are 5-digit; the leading digits identify the set.
+    .map((tid) => (tid === null ? null : Math.floor(tid / 10) % 1000))
+    .filter((id): id is number => id !== null);
+
+  return {
+    characterId: character.id,
+    characterName: character.name,
+    icon: character.icon,
+    level: asNumber(raw.level) ?? 80,
+    eidolon: asNumber(raw.rank) ?? 0,
+    lightCone: typeof equipment.name === 'string' ? equipment.name : null,
+    lightConeSuperimposition: asNumber(equipment.rank),
+    relicSetIds,
+    stats: readStats(asRecord(raw.finalStats))
+  };
+}
+
+/** Enka omits computed stats on most responses; return null rather than guess. */
+function readStats(source: Json): CharacterStats | null {
+  const hp = asNumber(source.hp);
+  const atk = asNumber(source.atk);
+  if (hp === null || atk === null) return null;
+
+  const asPercent = (value: unknown, fallback: number) => {
+    const parsed = asNumber(value);
+    return parsed === null ? fallback : Number((parsed * 100).toFixed(1));
+  };
+
+  return {
+    hp: Math.round(hp),
+    atk: Math.round(atk),
+    def: Math.round(asNumber(source.def) ?? 0),
+    spd: Math.round(asNumber(source.spd) ?? 0),
+    critRate: asPercent(source.critRate, 5),
+    critDmg: asPercent(source.critDmg, 50),
+    breakEffect: asPercent(source.breakEffect, 0),
+    energyRegen: asPercent(source.energyRegen, 100),
+    effectHitRate: asPercent(source.effectHitRate, 0),
+    dmgBonus: asPercent(source.dmgBonus, 0)
   };
 }

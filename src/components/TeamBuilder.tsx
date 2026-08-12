@@ -1,238 +1,218 @@
-import React, { useState } from 'react';
-import { Users, Sliders } from 'lucide-react';
-import type { TeamMemberConfig, HSRCharacter } from '../types/hsr';
-import { CHARACTERS_DATABASE } from '../data/characters';
+import { useMemo, useState } from 'react';
+import type { Dispatch, SetStateAction } from 'react';
+import type { CharacterStats, HSRCharacter, TeamMemberConfig } from '../types/hsr';
+import { CHARACTERS, getCharacter } from '../data/characters';
+import { makeMember } from '../data/team';
+import { ELEMENT_COLOR, PATH_ABBREVIATION } from '../ui/format';
 
 interface TeamBuilderProps {
   team: TeamMemberConfig[];
-  setTeam: React.Dispatch<React.SetStateAction<TeamMemberConfig[]>>;
+  setTeam: Dispatch<SetStateAction<TeamMemberConfig[]>>;
 }
 
-export const TeamBuilder: React.FC<TeamBuilderProps> = ({ team, setTeam }) => {
-  const [selectedSlot, setSelectedSlot] = useState(0);
+/** Fields the predictor actually reads, exposed as editable inputs. */
+const TUNABLE: { key: keyof CharacterStats; label: string; step?: number }[] = [
+  { key: 'spd', label: 'SPD' },
+  { key: 'atk', label: 'ATK' },
+  { key: 'hp', label: 'HP' },
+  { key: 'def', label: 'DEF' },
+  { key: 'critRate', label: 'CRIT Rate %' },
+  { key: 'critDmg', label: 'CRIT DMG %' },
+  { key: 'breakEffect', label: 'Break Effect %' },
+  { key: 'energyRegen', label: 'Energy Regen %' },
+  { key: 'dmgBonus', label: 'DMG Bonus %' },
+  { key: 'effectHitRate', label: 'Effect Hit Rate %' }
+];
 
-  const handleSelectCharacter = (slot: number, char: HSRCharacter) => {
-    const updated = [...team];
-    updated[slot] = {
-      slot,
-      character: char,
-      stats: { ...char.baseStats },
-      eidolon: 0,
-      superimposition: 1,
-      lightCone: char.defaultLightCone,
-      relicSets: char.defaultRelics,
-      planarSet: char.prydwenInfo.bestPlanarSets[0] || 'Broken Keel'
-    };
-    setTeam(updated);
-  };
-
-  const handleLoadPresetTeam = (presetName: string) => {
-    let newTeam: HSRCharacter[] = [];
-    if (presetName === 'super_break') {
-      newTeam = [
-        CHARACTERS_DATABASE.find(c => c.id === 'firefly')!,
-        CHARACTERS_DATABASE.find(c => c.id === 'harmony_mc')!,
-        CHARACTERS_DATABASE.find(c => c.id === 'ruan_mei')!,
-        CHARACTERS_DATABASE.find(c => c.id === 'aventurine')!
-      ];
-    } else if (presetName === 'acheron_nuke') {
-      newTeam = [
-        CHARACTERS_DATABASE.find(c => c.id === 'acheron')!,
-        CHARACTERS_DATABASE.find(c => c.id === 'sparkle')!,
-        CHARACTERS_DATABASE.find(c => c.id === 'ruan_mei')!,
-        CHARACTERS_DATABASE.find(c => c.id === 'aventurine')!
-      ];
-    } else if (presetName === 'feixiao_fua') {
-      newTeam = [
-        CHARACTERS_DATABASE.find(c => c.id === 'feixiao')!,
-        CHARACTERS_DATABASE.find(c => c.id === 'robin')!,
-        CHARACTERS_DATABASE.find(c => c.id === 'sparkle')!,
-        CHARACTERS_DATABASE.find(c => c.id === 'aventurine')!
-      ];
+/**
+ * Presets are the most-played Memory of Chaos teams in Prydwen's dataset
+ * rather than a hand-maintained list, so they follow the live meta.
+ */
+function usePresets() {
+  return useMemo(() => {
+    const seen = new Map<string, { members: string[]; rate: number }>();
+    for (const character of CHARACTERS) {
+      for (const team of character.teams) {
+        if (team.members.length !== 4) continue;
+        const key = [...team.members.map((m) => m.slug)].sort().join('|');
+        const rate = team.appearanceRate ?? 0;
+        if (!seen.has(key) || seen.get(key)!.rate < rate) {
+          seen.set(key, { members: team.members.map((m) => m.slug), rate });
+        }
+      }
     }
+    return [...seen.values()]
+      .sort((a, b) => b.rate - a.rate)
+      .slice(0, 6)
+      .map((preset) => ({
+        rate: preset.rate,
+        characters: preset.members.map(getCharacter).filter((c): c is HSRCharacter => Boolean(c))
+      }))
+      .filter((preset) => preset.characters.length === 4);
+  }, []);
+}
 
-    if (newTeam.length === 4) {
-      setTeam(newTeam.map((char, slot) => ({
-        slot,
-        character: char,
-        stats: { ...char.baseStats },
-        eidolon: 0,
-        superimposition: 1,
-        lightCone: char.defaultLightCone,
-        relicSets: char.defaultRelics,
-        planarSet: char.prydwenInfo.bestPlanarSets[0] || 'Broken Keel'
-      })));
-    }
+export function TeamBuilder({ team, setTeam }: TeamBuilderProps) {
+  const [slot, setSlot] = useState(0);
+  const [query, setQuery] = useState('');
+  const presets = usePresets();
+  const active = team[slot];
+
+  const roster = useMemo(
+    () => CHARACTERS.filter((c) => c.name.toLowerCase().includes(query.trim().toLowerCase())),
+    [query]
+  );
+
+  const setStat = (key: keyof CharacterStats, value: number) => {
+    setTeam((previous) =>
+      previous.map((member, index) =>
+        index === slot ? { ...member, stats: { ...member.stats, [key]: value } } : member
+      )
+    );
   };
-
-  const activeMember = team[selectedSlot];
 
   return (
     <div className="space-y-6">
-      {/* Top Presets Toolbar */}
-      <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 flex flex-col md:flex-row items-center justify-between gap-4 backdrop-blur-xl">
-        <div className="flex items-center gap-3">
-          <Users className="w-5 h-5 text-cyan-400" />
-          <div>
-            <h2 className="text-lg font-bold text-white font-mono">Prydwen Best Teams Presets</h2>
-            <p className="text-xs text-slate-400">Load meta endgame synergy teams calibrated for S+ tier clears</p>
-          </div>
+      <div className="panel">
+        <div className="rule flex items-baseline justify-between gap-3 px-5 py-2.5">
+          <p className="eyebrow">Most-played teams</p>
+          <p className="text-[11px] text-bone-600">By Memory of Chaos appearance rate</p>
         </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            onClick={() => handleLoadPresetTeam('super_break')}
-            className="px-3 py-1.5 text-xs font-bold bg-amber-500/10 text-amber-300 border border-amber-500/30 rounded-lg hover:bg-amber-500/20 transition-all"
-          >
-            🔥 Firefly Super Break
-          </button>
-          <button
-            onClick={() => handleLoadPresetTeam('acheron_nuke')}
-            className="px-3 py-1.5 text-xs font-bold bg-fuchsia-500/10 text-fuchsia-300 border border-fuchsia-500/30 rounded-lg hover:bg-fuchsia-500/20 transition-all"
-          >
-            ⚡ Acheron Hyper Nuke
-          </button>
-          <button
-            onClick={() => handleLoadPresetTeam('feixiao_fua')}
-            className="px-3 py-1.5 text-xs font-bold bg-cyan-500/10 text-cyan-300 border border-cyan-500/30 rounded-lg hover:bg-cyan-500/20 transition-all"
-          >
-            🌪️ Feixiao Follow-Up
-          </button>
-        </div>
+        <ul className="divide-y divide-ink-850">
+          {presets.map((preset) => (
+            <li key={preset.characters.map((c) => c.id).join('|')}>
+              <button
+                type="button"
+                onClick={() => setTeam(preset.characters.map((character, index) => makeMember(character, index)))}
+                className="flex w-full flex-wrap items-center justify-between gap-3 px-5 py-2.5 text-left hover:bg-ink-850"
+              >
+                <span className="flex flex-wrap items-center gap-2">
+                  {preset.characters.map((character) => (
+                    <span key={character.id} className="flex items-center gap-1.5">
+                      <img src={character.icon} alt="" loading="lazy" className="h-6 w-6 rounded-sharp bg-ink-850" />
+                      <span className="text-[12.5px] text-bone-300">{character.name}</span>
+                    </span>
+                  ))}
+                </span>
+                <span className="readout text-[11.5px] text-bone-600">{preset.rate}% use</span>
+              </button>
+            </li>
+          ))}
+        </ul>
       </div>
 
-      {/* 4 Team Member Slots Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {team.map((member, idx) => (
-          <div
-            key={idx}
-            onClick={() => setSelectedSlot(idx)}
-            className={`p-4 rounded-2xl border cursor-pointer transition-all ${
-              selectedSlot === idx
-                ? 'bg-slate-900 border-cyan-400 shadow-xl shadow-cyan-500/20 ring-1 ring-cyan-400'
-                : 'bg-slate-950/80 border-slate-800 hover:border-slate-700'
-            }`}
-          >
-            <div className="flex items-center justify-between border-b border-slate-800 pb-2 mb-3">
-              <span className="text-[10px] font-extrabold font-mono text-cyan-400 uppercase">SLOT {idx + 1}</span>
-              <span className="text-[10px] text-slate-500">{member.character.path}</span>
-            </div>
-
-            <div className="flex items-center gap-3">
-              <img
-                src={member.character.icon}
-                alt={member.character.name}
-                className="w-12 h-12 rounded-xl object-cover border border-slate-700"
-              />
-              <div>
-                <h3 className="font-bold text-white text-sm">{member.character.name}</h3>
-                <div className="flex items-center gap-2 text-[10px] text-slate-400 font-mono">
-                  <span>SPD {member.stats.spd}</span>
-                  <span>•</span>
-                  <span>E{member.eidolon} S{member.superimposition}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        ))}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {[0, 1, 2, 3].map((index) => {
+          const member = team[index];
+          const selected = index === slot;
+          return (
+            <button
+              key={index}
+              type="button"
+              onClick={() => setSlot(index)}
+              className={`panel flex items-center gap-3 p-3 text-left transition-colors ${
+                selected ? 'border-signal-dim' : 'hover:border-ink-700'
+              }`}
+            >
+              {member ? (
+                <>
+                  <img
+                    src={member.character.icon}
+                    alt=""
+                    className="h-11 w-11 shrink-0 rounded-sharp bg-ink-850 object-cover"
+                  />
+                  <div className="min-w-0">
+                    <p className="truncate text-[13px] text-bone-100">{member.character.name}</p>
+                    <p className="readout text-[11px] text-bone-600">
+                      <span style={{ color: ELEMENT_COLOR[member.character.element] }}>
+                        {member.character.element}
+                      </span>{' '}
+                      · {PATH_ABBREVIATION[member.character.path]} · SPD {member.stats.spd}
+                    </p>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <span className="h-11 w-11 shrink-0 rounded-sharp border border-dashed border-ink-700" />
+                  <span className="text-[13px] text-bone-600">Slot {index + 1} empty</span>
+                </>
+              )}
+            </button>
+          );
+        })}
       </div>
 
-      {/* Detailed Character Selector & Stat Tuner Panel */}
-      {activeMember && (
-        <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 space-y-6">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-            <h3 className="font-bold text-white text-base font-mono flex items-center gap-2">
-              <Sliders className="w-4 h-4 text-cyan-400" />
-              <span>Configure Slot {selectedSlot + 1}: {activeMember.character.name}</span>
-            </h3>
-            <span className="text-xs text-slate-400">Prydwen Recommended Build Loaded</span>
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_300px]">
+        <div className="panel">
+          <div className="rule flex flex-wrap items-center justify-between gap-3 px-5 py-2.5">
+            <p className="eyebrow">Assign to slot {slot + 1}</p>
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Filter"
+              className="w-40 rounded-sharp border border-ink-800 bg-ink-850 px-2 py-1 text-[12.5px] text-bone-100 outline-none placeholder:text-bone-600 focus:border-ink-600"
+            />
           </div>
-
-          {/* Character Library Selector Grid */}
-          <div className="space-y-2">
-            <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Switch Character</label>
-            <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-8 gap-2">
-              {CHARACTERS_DATABASE.map(char => (
+          <div className="grid max-h-96 grid-cols-3 gap-1.5 overflow-y-auto p-3 sm:grid-cols-5 lg:grid-cols-7">
+            {roster.map((character) => {
+              const selected = active?.character.id === character.id;
+              return (
                 <button
-                  key={char.id}
-                  onClick={() => handleSelectCharacter(selectedSlot, char)}
-                  className={`p-2 rounded-xl border text-left transition-all ${
-                    activeMember.character.id === char.id
-                      ? 'bg-cyan-500/20 border-cyan-400 text-white'
-                      : 'bg-slate-950 border-slate-800 hover:border-slate-700 text-slate-400'
+                  key={character.id}
+                  type="button"
+                  title={`${character.name} · ${character.element} · ${character.path}`}
+                  onClick={() =>
+                    setTeam((previous) => {
+                      const next = [...previous];
+                      next[slot] = makeMember(character, slot);
+                      return next;
+                    })
+                  }
+                  className={`rounded-sharp border p-1.5 transition-colors ${
+                    selected ? 'border-signal-dim bg-ink-850' : 'border-transparent hover:bg-ink-850'
                   }`}
                 >
-                  <img src={char.icon} alt={char.name} className="w-8 h-8 rounded-lg mb-1 object-cover mx-auto" />
-                  <div className="text-[10px] font-bold text-center truncate">{char.name}</div>
+                  <img src={character.icon} alt="" loading="lazy" className="mx-auto h-9 w-9 rounded-sharp bg-ink-850" />
+                  <span className="mt-1 block truncate text-[10.5px] text-bone-500">{character.name}</span>
                 </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Stat Customizer Inputs */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 bg-slate-950 p-4 rounded-xl border border-slate-800 text-xs">
-            <div>
-              <label className="text-slate-400 block mb-1">SPD (Speed)</label>
-              <input
-                type="number"
-                value={activeMember.stats.spd}
-                onChange={(e) => {
-                  const val = parseFloat(e.target.value) || 100;
-                  const updated = [...team];
-                  updated[selectedSlot].stats.spd = val;
-                  setTeam(updated);
-                }}
-                className="w-full bg-slate-900 border border-slate-700 text-cyan-400 font-mono p-2 rounded-lg"
-              />
-            </div>
-
-            <div>
-              <label className="text-slate-400 block mb-1">CRIT Rate (%)</label>
-              <input
-                type="number"
-                value={activeMember.stats.critRate}
-                onChange={(e) => {
-                  const val = parseFloat(e.target.value) || 0;
-                  const updated = [...team];
-                  updated[selectedSlot].stats.critRate = val;
-                  setTeam(updated);
-                }}
-                className="w-full bg-slate-900 border border-slate-700 text-amber-400 font-mono p-2 rounded-lg"
-              />
-            </div>
-
-            <div>
-              <label className="text-slate-400 block mb-1">CRIT DMG (%)</label>
-              <input
-                type="number"
-                value={activeMember.stats.critDmg}
-                onChange={(e) => {
-                  const val = parseFloat(e.target.value) || 0;
-                  const updated = [...team];
-                  updated[selectedSlot].stats.critDmg = val;
-                  setTeam(updated);
-                }}
-                className="w-full bg-slate-900 border border-slate-700 text-amber-400 font-mono p-2 rounded-lg"
-              />
-            </div>
-
-            <div>
-              <label className="text-slate-400 block mb-1">Break Effect (%)</label>
-              <input
-                type="number"
-                value={activeMember.stats.breakEffect}
-                onChange={(e) => {
-                  const val = parseFloat(e.target.value) || 0;
-                  const updated = [...team];
-                  updated[selectedSlot].stats.breakEffect = val;
-                  setTeam(updated);
-                }}
-                className="w-full bg-slate-900 border border-slate-700 text-fuchsia-400 font-mono p-2 rounded-lg"
-              />
-            </div>
+              );
+            })}
           </div>
         </div>
-      )}
+
+        {active && (
+          <div className="panel h-fit">
+            <div className="rule px-5 py-2.5">
+              <p className="eyebrow">{active.character.name} stats</p>
+            </div>
+            <div className="space-y-2.5 px-5 py-4">
+              {TUNABLE.map(({ key, label }) => (
+                <label key={key} className="flex items-center justify-between gap-3">
+                  <span className="text-[12.5px] text-bone-500">{label}</span>
+                  <input
+                    type="number"
+                    value={active.stats[key]}
+                    onChange={(event) => setStat(key, Number(event.target.value) || 0)}
+                    className="readout w-24 rounded-sharp border border-ink-800 bg-ink-850 px-2 py-1 text-right text-[12.5px] text-bone-100 outline-none focus:border-ink-600"
+                  />
+                </label>
+              ))}
+            </div>
+            {active.character.build.statTargets.length > 0 && (
+              <div className="border-t border-ink-850 px-5 py-3">
+                <p className="eyebrow">Prydwen targets</p>
+                <ul className="mt-1.5 space-y-1">
+                  {active.character.build.statTargets.slice(0, 6).map((target) => (
+                    <li key={target} className="text-[12px] leading-relaxed text-bone-500">
+                      {target}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
-};
+}
