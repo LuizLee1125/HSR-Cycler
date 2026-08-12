@@ -1,3 +1,4 @@
 [build]
-# Redirect Rust build artifacts to LocalAppData Temp directory to eliminate Windows Defender / indexer file locking (os error 32)
-target-dir = "C:/Users/Luiz Alfonso Lee/AppData/Local/Temp/hsr_cycler_target"
+# Default build artifacts directory relative to package
+# target-dir = "target"
+

@@ -1,4 +1,11 @@
-import type { EndgameDatabase, EndgameMode, EndgameSeason, EndgameStage, StageNode } from '../types/hsr';
+import type {
+  EndgameDatabase,
+  EndgameMode,
+  EndgameModeEntry,
+  EndgameSeason,
+  EndgameStage,
+  StageNode
+} from '../types/hsr';
 import generated from './generated/endgame.json';
 
 /**
@@ -8,26 +15,56 @@ import generated from './generated/endgame.json';
  */
 export const ENDGAME_DB = generated as unknown as EndgameDatabase;
 
-export const ENDGAME_MODES: EndgameMode[] = ENDGAME_DB.modes.map((season) => season.mode);
+export const ENDGAME_MODES: EndgameMode[] = ENDGAME_DB.modes.map((entry) => entry.mode);
 
-export function getSeason(mode: EndgameMode): EndgameSeason {
-  const season = ENDGAME_DB.modes.find((entry) => entry.mode === mode);
-  if (!season) throw new Error(`No season data for ${mode}`);
-  return season;
+export function getMode(mode: EndgameMode): EndgameModeEntry {
+  const entry = ENDGAME_DB.modes.find((candidate) => candidate.mode === mode);
+  if (!entry) throw new Error(`No data for ${mode}`);
+  return entry;
 }
 
-export function getStages(mode: EndgameMode): EndgameStage[] {
-  return getSeason(mode).stages;
+/** Released rotations for a mode, newest first. */
+export function seasonsFor(mode: EndgameMode): EndgameSeason[] {
+  return getMode(mode).seasons;
 }
 
-export const ALL_STAGES: EndgameStage[] = ENDGAME_DB.modes.flatMap((season) => season.stages);
+/** The current rotation, used whenever no season has been chosen explicitly. */
+export function latestSeason(mode: EndgameMode): EndgameSeason {
+  const seasons = seasonsFor(mode);
+  if (!seasons.length) throw new Error(`No seasons for ${mode}`);
+  return seasons[0];
+}
+
+export function findSeason(mode: EndgameMode, seasonId: number | null): EndgameSeason {
+  return seasonsFor(mode).find((season) => season.seasonId === seasonId) ?? latestSeason(mode);
+}
+
+/** A label the season picker can show: the version where there is one, else the id. */
+export function seasonLabel(season: EndgameSeason): string {
+  return season.gameVersion ? `v${season.gameVersion}` : `#${season.seasonId}`;
+}
+
+/**
+ * The stages a season offers at the selected difficulty. Starward replaces the
+ * normal stage rather than adding to it — it is the same fight with a third
+ * node and harder scaling.
+ */
+export function stagesFor(season: EndgameSeason, starward: boolean): EndgameStage[] {
+  const matching = season.stages.filter((stage) => stage.starward === starward);
+  return matching.length ? matching : season.stages.filter((stage) => !stage.starward);
+}
+
+/** Older rotations predate Starward, and Anomaly Arbitration never had it. */
+export function hasStarward(season: EndgameSeason): boolean {
+  return season.stages.some((stage) => stage.starward);
+}
+
+export const ALL_STAGES: EndgameStage[] = ENDGAME_DB.modes.flatMap((entry) =>
+  entry.seasons.flatMap((season) => season.stages)
+);
 
 export function getStage(id: string): EndgameStage | undefined {
   return ALL_STAGES.find((stage) => stage.id === id);
-}
-
-export function modeOfStage(stage: EndgameStage): EndgameMode {
-  return ENDGAME_DB.modes.find((season) => season.stages.includes(stage))?.mode ?? 'Memory of Chaos';
 }
 
 /** Fixed waves first, then any endless waves the mode adds. */
@@ -40,16 +77,20 @@ export function nodeEnemyCount(node: StageNode): number {
 }
 
 /**
- * Cycle budget for a three-star clear. Memory of Chaos states it directly;
- * the score-based modes are capped by their own countdown instead.
+ * Cycles available for a three-star clear, where the mode states one. Memory of
+ * Chaos publishes both a countdown and "win with at least N cycles left", so
+ * the real budget is the difference. The score-based modes have no cycle
+ * condition at all and return null.
  */
-export function cycleBudget(stage: EndgameStage, mode: EndgameMode): number {
-  if (stage.cycleLimit) {
-    const best = stage.starConditions
-      .map((condition) => Number(/at least (\d+) Cycle/.exec(condition)?.[1]))
-      .filter((value) => Number.isFinite(value));
-    // "Win with at least N cycles left" out of `cycleLimit` total.
-    return best.length ? stage.cycleLimit - Math.max(...best) : stage.cycleLimit;
-  }
-  return mode === 'Pure Fiction' ? 4 : 10;
+export function threeStarCycles(stage: EndgameStage): number | null {
+  if (!stage.cycleLimit) return null;
+  const best = stage.starConditions
+    .map((condition) => Number(/at least (\d+) Cycle/.exec(condition)?.[1]))
+    .filter((value) => Number.isFinite(value));
+  return best.length ? stage.cycleLimit - Math.max(...best) : stage.cycleLimit;
+}
+
+/** Hard stop for the simulation, so a team that cannot win still terminates. */
+export function simulationCycleCap(stage: EndgameStage, mode: EndgameMode): number {
+  return threeStarCycles(stage) ?? (mode === 'Pure Fiction' ? 4 : 10);
 }

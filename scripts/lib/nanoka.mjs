@@ -195,52 +195,156 @@ function iconUrl(spritePath) {
 }
 
 /**
- * Game text carries markup (`<color=#..>`, `<unbreak>`) and `#n[i]` parameter
- * slots. A slot followed by `%` reads its param as a ratio.
+ * Game text carries markup (`<color=#..>`, `<unbreak>`) and `#n` parameter
+ * slots. The slot usually carries a format hint (`#1[i]`, `#2[f1]`) but Pure
+ * Fiction and Apocalyptic Shadow star conditions ship bare slots (`Gain #1
+ * points`), so the hint is optional. A slot followed by `%` reads its param as
+ * a ratio.
  */
 export function renderGameText(text, params = []) {
   if (!text) return '';
+  const list = toParamList(params);
   return text
-    .replace(/#(\d+)\[([a-z]+\d*)\](%?)/gi, (_, index, format, percent) => {
-      const raw = params[Number(index) - 1];
-      if (raw === undefined) return '';
+    .replace(/#(\d+)(?:\[([a-z]+\d*)\])?(%?)/gi, (_, index, format, percent) => {
+      const raw = list[Number(index) - 1];
+      // Some records ship a slot with no matching param — Memory of Chaos'
+      // Starward "No more than #1 downed character(s)" is one. Deleting the
+      // slot silently produces broken prose, so mark the gap instead of
+      // inventing a value for it.
+      if (raw === undefined || raw === null) return '?';
       const value = percent ? raw * 100 : raw;
-      const decimals = /^f(\d+)$/i.exec(format);
+      const decimals = /^f(\d+)$/i.exec(format ?? '');
       if (decimals) return `${value.toFixed(Number(decimals[1]))}${percent}`;
       return `${Math.round(value)}${percent}`;
     })
-    .replace(/<\/?(?:unbreak|color|i|b)[^>]*>/gi, '')
+    .replace(/<\/?(?:unbreak|color|i|b|align)[^>]*>/gi, '')
     .replace(/\\n/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
 
 /**
- * Some modes publish `<detail>/version.json`, mapping game version -> season
- * ids (with unreleased seasons filed under `"unknown"`). That is the most
- * reliable way to skip beta content, so use it whenever it exists.
+ * Params arrive as an array on most records but as a bare number on star
+ * conditions (`{ name: "Gain #1 points", param: 60000 }`).
  */
-export async function pickSeasonForVersion(dataVersion, detailPath, gameVersion, index) {
-  try {
-    const map = await fetchJson(cdnUrl(dataVersion, `${detailPath}/version.json`));
-    const ids = map[gameVersion];
-    if (Array.isArray(ids) && ids.length) {
-      const id = String(ids.at(-1));
-      const season = index[id] ?? Object.values(index).find((s) => String(s.id) === id);
-      if (season) return { ...season, id };
-    }
-  } catch {
-    // Mode has no version map; fall through to the naming heuristic.
-  }
-  return pickLiveSeason(index);
+export function toParamList(params) {
+  if (Array.isArray(params)) return params;
+  if (params === undefined || params === null) return [];
+  return [params];
 }
 
-/** Newest season with a localised English name — unnamed rows are unreleased. */
-export function pickLiveSeason(index) {
-  // Anomaly Arbitration's index omits `id`, so fall back to the record key.
-  const released = Object.entries(index)
-    .map(([key, season]) => ({ ...season, id: season.id ?? key }))
-    .filter((season) => season.en && season.en.trim());
-  if (!released.length) throw new Error('No named season found');
-  return released.sort((a, b) => Number(a.id) - Number(b.id)).at(-1);
+/**
+ * Buff descriptions are prose, but the numbers are already substituted by
+ * `renderGameText`, so the magnitude of each effect can be read straight back
+ * out. Only effects the damage pipeline can actually consume are extracted —
+ * anything else stays as description text for the player to read.
+ */
+const EFFECT_RULES = [
+  ['defIgnore', /ignores?\s+(\d+(?:\.\d+)?)%\s+of[^,;]*?DEF/i],
+  ['resPen', /ignores?\s+(\d+(?:\.\d+)?)%\s+of[^,;]*?RES/i],
+  ['resPen', /RES\s+PEN[^,;]*?by\s+(\d+(?:\.\d+)?)%/i],
+  ['resPen', /(?:decreases?|reduces?)[^,;]*?RES[^,;]*?by\s+(\d+(?:\.\d+)?)%/i],
+  ['critDmg', /CRIT\s+DMG\s+by\s+(\d+(?:\.\d+)?)%/i],
+  ['breakEfficiency', /Weakness\s+Break\s+Efficiency[^,;]*?by\s+(\d+(?:\.\d+)?)%/i],
+  ['vulnerability', /DMG\s+taken[^,;]*?by\s+(\d+(?:\.\d+)?)%/i],
+  ['dmgBonus', /DMG\s+dealt[^,;]*?by\s+(\d+(?:\.\d+)?)%/i],
+  ['dmgBonus', /DMG\s+dealt[^,;]*?increases?\s+by\s+(\d+(?:\.\d+)?)%/i],
+  ['spdPercent', /SPD\s+by\s+(\d+(?:\.\d+)?)%/i]
+];
+
+/**
+ * Read per clause, not per description: one clause states one effect, so
+ * "Increases the All-Type RES PEN for the Skill DMG and Ultimate DMG dealt by
+ * the character in position 1 by 50%" registers RES PEN only, instead of also
+ * matching the DMG-dealt rule on the same 50%.
+ */
+export function parseBuffEffects(description) {
+  const effects = {};
+  for (const clause of String(description).split(/[,;.]\s*/)) {
+    if (!clause.trim()) continue;
+    for (const [key, pattern] of EFFECT_RULES) {
+      const value = Number(pattern.exec(clause)?.[1]);
+      if (!Number.isFinite(value) || value <= 0) continue;
+      // First rule to match a clause claims it; later clauses can still add
+      // other effects, but never overwrite an earlier reading.
+      if (effects[key] === undefined) effects[key] = value;
+      break;
+    }
+  }
+  return effects;
+}
+
+/**
+ * Turns a nanoka buff list into the selectable pool the UI offers. Deduped by
+ * name because Apocalyptic Shadow repeats a buff across its three groups.
+ */
+export function extractBuffs(lists) {
+  const byName = new Map();
+  for (const list of lists) {
+    for (const entry of Array.isArray(list) ? list : []) {
+      if (!entry?.name) continue;
+      const name = renderGameText(entry.name, entry.param);
+      if (!name || byName.has(name)) continue;
+      const description = renderGameText(entry.desc, entry.param ?? entry.param_fix);
+      byName.set(name, {
+        id: String(entry.id ?? name.toLowerCase().replace(/[^a-z0-9]+/g, '-')),
+        name,
+        description,
+        effects: parseBuffEffects(description)
+      });
+    }
+  }
+  return [...byName.values()];
+}
+
+/** Buckets in `version.json` that are not a shipped game version. */
+const NON_VERSION_KEYS = new Set(['unknown', 'static']);
+
+/**
+ * The released seasons for a mode, newest last, capped at `limit`.
+ *
+ * A version can hold more than one season — the game resets these rotations
+ * once or twice per patch (`"2.2": [1014, 1015]`, `"1.4": [1004, 1005, 1006]`)
+ * — so every id for a version is returned, each tagged with the version it
+ * belongs to.
+ *
+ * Beta content is excluded two ways, because the two sources disagree:
+ * - `version.json` files unreleased seasons under `"unknown"` (Anomaly
+ *   Arbitration's season 9 sits there today);
+ * - the mode index ships an unnamed trailing row for the next patch.
+ *
+ * Pure Fiction and Apocalyptic Shadow publish no `version.json`, and their
+ * `begin`/`end` fields are empty strings, so there is no date to filter on.
+ * For those the only reliable released signal is a localised English name, and
+ * the season carries no version label.
+ */
+export async function listReleasedSeasons(dataVersion, detailPath, index, limit = 4) {
+  // The index is the authority on which ids exist and which are named.
+  const byId = new Map(
+    Object.entries(index)
+      .map(([key, season]) => ({ ...season, id: String(season.id ?? key) }))
+      .filter((season) => season.en && String(season.en).trim())
+      .map((season) => [season.id, season])
+  );
+
+  let versionOf = null;
+  try {
+    const map = await fetchJson(cdnUrl(dataVersion, `${detailPath}/version.json`));
+    versionOf = new Map();
+    for (const [version, ids] of Object.entries(map)) {
+      if (NON_VERSION_KEYS.has(version) || !Array.isArray(ids)) continue;
+      for (const id of ids) versionOf.set(String(id), version);
+    }
+  } catch {
+    // Mode has no version map; fall back to the naming heuristic alone.
+  }
+
+  const released = [...byId.values()]
+    // With a version map, an id missing from it is beta or retired data.
+    .filter((season) => !versionOf || versionOf.has(season.id))
+    .map((season) => ({ ...season, gameVersion: versionOf?.get(season.id) ?? null }))
+    .sort((a, b) => Number(a.id) - Number(b.id));
+
+  if (!released.length) throw new Error(`No released season found for ${detailPath}`);
+  return released.slice(-limit);
 }

@@ -1,14 +1,21 @@
-# Execution checklist
+# Execution checklist — v0.3
 
-- [ ] 1. `scripts/lib/fetch.mjs` — cached HTTP helper
-- [ ] 2. `scripts/lib/nanoka.mjs` — version resolve + stat formula
-- [ ] 3. `scripts/fetch-endgame.mjs` — all 4 modes, nodes, waves, enemies
-- [ ] 4. `scripts/fetch-characters.mjs` — 90 released characters + Prydwen builds/teams
-- [ ] 5. `scripts/build-data.mjs` + `npm run data`
-- [ ] 6. `src/types/hsr.ts` — Remembrance/Elation paths, node/wave shape, team telemetry
-- [ ] 7. `src/data/characters.ts` / `endgameStages.ts` — typed re-exports
-- [ ] 8. `src/engine/*` — consume nodes, real cycle limits, deterministic crit
-- [ ] 9. UI overhaul — tokens + all components
-- [ ] 10. Delete template leftovers (`App.css`, react/vite svg)
-- [ ] 11. `README.md` + `system_architecture.md`
-- [ ] 12. `npm run build` + `npm run lint` + spot-check data
+- [x] 1. `scripts/lib/gear.mjs` + `fetch-gear.mjs` — light cone & relic set database
+- [x] 2. `scripts/fetch-endgame.mjs` — season history, PF buff pool, beta exclusion
+- [x] 3. `src/types/hsr.ts` — gear, season version, cycle model, card identity
+- [x] 4. `npm run data` — regenerate, spot-check A Thankless Coronation + Scholar set
+- [x] 5. `src/parser/imageBuildParser.ts` — spatial OCR rewrite
+- [x] 6. `src/data/roster.ts` — duplicate + Trailblazer-path guards
+- [x] 7. `src/components/TeamBuilder.tsx` — grey out unavailable characters
+- [x] 8. `src/components/BuildCardImport.tsx` — identity block, min=0, gear fields
+- [x] 9. `src/engine/hsrMechanics.ts` — cycle model, gear conditional effects
+- [x] 10. `src/components/Shell.tsx` — season/version selector
+- [x] 11. UI bug pass — sticky sidebar, modal escape/backdrop/scroll-lock, wrapping
+- [x] 12. `npm run build` + `npm run lint` + browser verification
+
+## Open question for the user
+
+Anomaly Arbitration's cycle rule. Both it and Memory of Chaos start at 0, which is
+implemented. The reported difference beyond that is not derivable — AA's records carry
+no `countdown` and no cycle `challenge`. It uses MoC timing (150 AV first cycle, 100 AV
+after) until confirmed; the fix is one row of `CYCLE_MODEL` in `hsrMechanics.ts`.

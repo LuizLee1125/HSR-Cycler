@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 const execFileAsync = promisify(execFile);
 const here = dirname(fileURLToPath(import.meta.url));
 
-for (const script of ['fetch-endgame.mjs', 'fetch-characters.mjs']) {
+for (const script of ['fetch-endgame.mjs', 'fetch-characters.mjs', 'fetch-gear.mjs']) {
   console.log(`\n▸ ${script}`);
   const { stdout, stderr } = await execFileAsync(process.execPath, [join(here, script)], {
     maxBuffer: 64 * 1024 * 1024

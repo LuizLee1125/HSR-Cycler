@@ -141,6 +141,14 @@
     border-color: #eec066;
   }
 
+  /* Tab strips scroll when they must, but the bar itself is visual noise. */
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
   /* Numeric readout used across stat blocks. */
   .readout {
     font-family: var(--font-mono);

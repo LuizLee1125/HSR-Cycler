@@ -10,6 +10,7 @@ import {
   parseStatTargets,
   parseTeams
 } from './lib/prydwen.mjs';
+import { buildSkills } from './lib/skills.mjs';
 
 const SRR = 'https://raw.githubusercontent.com/Mar-7th/StarRailRes/master';
 const SRR_INDEX = `${SRR}/index_new/en`;
@@ -103,10 +104,11 @@ function resolveSourceId(slug, name, srrCharacters) {
 }
 
 async function main() {
-  const [roster, srrCharacters, srrPromotions] = await Promise.all([
+  const [roster, srrCharacters, srrPromotions, srrSkills] = await Promise.all([
     fetchRoster(),
     fetchJson(`${SRR_INDEX}/characters.json`),
-    fetchJson(`${SRR_INDEX}/character_promotions.json`)
+    fetchJson(`${SRR_INDEX}/character_promotions.json`),
+    fetchJson(`${SRR_INDEX}/character_skills.json`)
   ]);
 
   const released = roster.filter((entry) => !entry.unreleased);
@@ -141,6 +143,9 @@ async function main() {
       preview: `${SRR}/${source.preview}`,
       splash: `${SRR}/${source.portrait}`,
       baseStats: buildBaseStats(srrPromotions[sourceId]),
+      // Per-level ability multipliers, so an imported build card's talent
+      // levels resolve to the damage percentages the game actually uses.
+      skills: buildSkills(srrSkills, sourceId),
       build: {
         relicSets: sets.relics,
         planarSets: sets.planars,
@@ -168,7 +173,15 @@ async function main() {
 
   const withTeams = resolved.filter((c) => c.teams.length).length;
   const withRelics = resolved.filter((c) => c.build.relicSets.length).length;
-  console.log(`  characters: ${resolved.length} | ${withRelics} with relic sets | ${withTeams} with teams`);
+  const withSkills = resolved.filter((c) => c.skills.skill?.scalings.length || c.skills.basic?.scalings.length).length;
+  console.log(
+    `  characters: ${resolved.length} | ${withRelics} with relic sets | ${withTeams} with teams | ${withSkills} with damage multipliers`
+  );
+
+  const missingSkills = resolved.filter((c) => !c.skills.basic || !c.skills.skill || !c.skills.ultimate);
+  if (missingSkills.length) {
+    console.warn(`  ! missing a core ability: ${missingSkills.map((c) => c.id).join(', ')}`);
+  }
 
   const target = await writeGenerated('src/data/generated/characters.json', {
     sources: ['https://www.prydwen.gg/star-rail', 'https://github.com/Mar-7th/StarRailRes'],

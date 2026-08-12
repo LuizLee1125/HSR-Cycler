@@ -1,58 +1,87 @@
 import { useState } from 'react';
-import type { EndgameMode, EndgameStage, EnemyUnit, EnemyWave, StageNode } from '../types/hsr';
-import { getSeason } from '../data/endgameStages';
+import type { EndgameSeason, EndgameStage, EnemyUnit, EnemyWave, StageBuff, StageNode } from '../types/hsr';
+import { seasonLabel, stagesFor } from '../data/endgameStages';
 import { ELEMENT_COLOR, RANK_LABEL, compactNumber, fullNumber, toughnessBars } from '../ui/format';
 
 interface EndgameSelectorProps {
-  mode: EndgameMode;
+  season: EndgameSeason;
+  starward: boolean;
   selectedStage: EndgameStage | null;
   onSelectStage: (stage: EndgameStage) => void;
+  buff: StageBuff | null;
+  onSelectBuff: (buff: StageBuff | null) => void;
 }
 
-export function EndgameSelector({ mode, selectedStage, onSelectStage }: EndgameSelectorProps) {
-  const season = getSeason(mode);
-  const stage = selectedStage ?? season.stages[0];
+export function EndgameSelector({
+  season,
+  starward,
+  selectedStage,
+  onSelectStage,
+  buff,
+  onSelectBuff
+}: EndgameSelectorProps) {
+  const mode = season.mode;
+  const stages = stagesFor(season, starward);
+  const stage = stages.includes(selectedStage as EndgameStage) ? (selectedStage as EndgameStage) : stages[0];
   const [nodeIndex, setNodeIndex] = useState(0);
   const node = stage?.nodes[Math.min(nodeIndex, stage.nodes.length - 1)];
+  const buffChoices = season.buffChoices ?? [];
 
   if (!stage) return <p className="text-bone-500">No stage data for {mode}.</p>;
 
   return (
     <div className="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
-      <div className="panel h-fit">
-        <div className="rule px-4 py-3">
-          <p className="eyebrow">{mode}</p>
-          <p className="mt-1 text-[13px] text-bone-100">{season.seasonName}</p>
+      <div className="space-y-5">
+        <div className="panel h-fit">
+          <div className="rule px-4 py-3">
+            <p className="eyebrow">{mode}</p>
+            <p className="mt-1 text-[13px] text-bone-100">{season.seasonName}</p>
+            <p className="readout mt-0.5 text-[11px] text-bone-600">{seasonLabel(season)}</p>
+          </div>
+          {stages.length > 1 ? (
+            <ul className="p-1.5">
+              {stages.map((entry) => {
+                const active = entry.id === stage.id;
+                return (
+                  <li key={entry.id}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onSelectStage(entry);
+                        setNodeIndex(0);
+                      }}
+                      className={`flex w-full items-baseline gap-2 rounded-sharp px-2.5 py-1.5 text-left text-[13px] transition-colors ${
+                        active ? 'bg-ink-800 text-bone-100' : 'text-bone-500 hover:bg-ink-850 hover:text-bone-300'
+                      }`}
+                    >
+                      <span className="readout w-5 shrink-0 text-[11px] text-bone-600">{entry.stageNumber}</span>
+                      <span className="truncate">{entry.name}</span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <p className="px-4 py-3 text-[12px] leading-relaxed text-bone-600">
+              {starward
+                ? 'Starward: the hardest stage with a third node and a raised star threshold.'
+                : 'Only the hardest stage is planned for — the lower ones are the same fight with weaker scaling.'}
+            </p>
+          )}
         </div>
-        <ul className="p-1.5">
-          {season.stages.map((entry) => {
-            const active = entry.id === stage.id;
-            return (
-              <li key={entry.id}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    onSelectStage(entry);
-                    setNodeIndex(0);
-                  }}
-                  className={`flex w-full items-baseline gap-2 rounded-sharp px-2.5 py-1.5 text-left text-[13px] transition-colors ${
-                    active ? 'bg-ink-800 text-bone-100' : 'text-bone-500 hover:bg-ink-850 hover:text-bone-300'
-                  }`}
-                >
-                  <span className="readout w-5 shrink-0 text-[11px] text-bone-600">{entry.stageNumber}</span>
-                  <span className="truncate">{entry.name}</span>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
+
+        {/* Only two modes let the player choose; the rest apply their season
+            effects unconditionally, so no picker is shown for them. */}
+        {buffChoices.length > 0 && (
+          <BuffPicker choices={buffChoices} selected={buff} onSelect={onSelectBuff} />
+        )}
       </div>
 
       <div className="min-w-0 space-y-5">
         <StageHeader stage={stage} />
 
         {stage.nodes.length > 1 && (
-          <div className="flex gap-1">
+          <div className="flex flex-wrap gap-1">
             {stage.nodes.map((entry, index) => (
               <button
                 key={entry.index}
@@ -76,16 +105,92 @@ export function EndgameSelector({ mode, selectedStage, onSelectStage }: EndgameS
   );
 }
 
+const EFFECT_LABEL: Record<string, string> = {
+  dmgBonus: 'DMG',
+  resPen: 'RES PEN',
+  defIgnore: 'DEF ignore',
+  critDmg: 'CRIT DMG',
+  vulnerability: 'Vulnerability',
+  breakEfficiency: 'Break efficiency',
+  spdPercent: 'SPD'
+};
+
+/** One buff, one choice — the modes that offer a pool let you take exactly one. */
+function BuffPicker({
+  choices,
+  selected,
+  onSelect
+}: {
+  choices: StageBuff[];
+  selected: StageBuff | null;
+  onSelect: (buff: StageBuff | null) => void;
+}) {
+  return (
+    <div className="panel">
+      <div className="rule px-4 py-2.5">
+        <p className="eyebrow">Pick one buff</p>
+        <p className="mt-1 text-[11.5px] leading-snug text-bone-600">
+          Applied to every damage number in the plan.
+        </p>
+      </div>
+      <ul className="p-1.5">
+        {choices.map((choice) => {
+          const active = selected?.id === choice.id;
+          const effects = Object.entries(choice.effects);
+          return (
+            <li key={choice.id}>
+              <button
+                type="button"
+                onClick={() => onSelect(active ? null : choice)}
+                className={`w-full rounded-sharp px-2.5 py-2 text-left transition-colors ${
+                  active ? 'bg-ink-800' : 'hover:bg-ink-850'
+                }`}
+              >
+                <span className={`block text-[12.5px] ${active ? 'text-bone-100' : 'text-bone-300'}`}>
+                  {choice.name}
+                </span>
+                {effects.length > 0 && (
+                  <span className="readout mt-0.5 block text-[10.5px]" style={{ color: 'var(--color-signal)' }}>
+                    {effects.map(([key, value]) => `+${value}% ${EFFECT_LABEL[key] ?? key}`).join(' · ')}
+                  </span>
+                )}
+                <span className="mt-1 block text-[11.5px] leading-snug text-bone-600">{choice.description}</span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
 function StageHeader({ stage }: { stage: EndgameStage }) {
   const modifiers = stage.turbulence ? [stage.turbulence, ...stage.modifiers] : stage.modifiers;
   return (
     <div className="panel">
       <div className="rule flex flex-wrap items-baseline justify-between gap-3 px-5 py-4">
-        <h2 className="text-[17px] font-semibold tracking-tight text-bone-100">{stage.name}</h2>
+        <h2 className="flex flex-wrap items-baseline gap-2.5 text-[17px] font-semibold tracking-tight text-bone-100">
+          {stage.name}
+          {stage.starward && (
+            <span
+              className="rounded-sharp border px-1.5 py-0.5 text-[10px] font-semibold tracking-[0.14em] uppercase"
+              style={{ color: 'var(--color-signal)', borderColor: 'var(--color-signal-dim)' }}
+            >
+              Starward
+            </span>
+          )}
+        </h2>
         {stage.cycleLimit && (
           <span className="readout text-[12px] text-bone-500">{stage.cycleLimit} cycle limit</span>
         )}
       </div>
+
+      {stage.specialCondition && (
+        <div className="rule px-5 py-3">
+          <p className="eyebrow">Starward condition</p>
+          <p className="mt-1 text-[12.5px] text-bone-300">{stage.specialCondition}</p>
+        </div>
+      )}
 
       {stage.starConditions.length > 0 && (
         <div className="rule flex flex-wrap gap-x-6 gap-y-1.5 px-5 py-3">
